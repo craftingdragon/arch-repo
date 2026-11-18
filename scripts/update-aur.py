@@ -16,6 +16,9 @@ def run(*args, cwd=None):
 def digest(files):
     h = hashlib.sha256()
     for name, data in sorted(files.items()):
+        if isinstance(data, tuple):
+            h.update(b'symlink\0')
+            data = data[1]
         h.update(name.encode() + b'\0' + data + b'\0')
     return h.hexdigest()
 
@@ -35,8 +38,57 @@ def names(text):
 
 
 def tree(directory):
-    return {str(p.relative_to(directory)): p.read_bytes()
-            for p in directory.rglob('*') if p.is_file()}
+    files = {}
+    for p in directory.rglob('*'):
+        if p.is_symlink():
+            files[str(p.relative_to(directory))] = ('symlink', os.fsencode(os.readlink(p)))
+        elif p.is_file():
+            files[str(p.relative_to(directory))] = p.read_bytes()
+    return files
+
+
+def read_aur_tree(source):
+    files, modes = {}, {}
+    entries = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'], cwd=source)
+    for entry in entries.split(b'\0'):
+        if not entry:
+            continue
+        meta, raw_name = entry.split(b'\t', 1)
+        mode, kind, sha = meta.decode().split()
+        name = os.fsdecode(raw_name)
+        if mode not in ('100644', '100755', '120000') or kind != 'blob':
+            raise ValueError(f'Unsupported AUR file: {name} (mode {mode}, type {kind})')
+        modes[name] = int(mode, 8)
+        files[name] = subprocess.check_output(['git', 'cat-file', 'blob', sha], cwd=source)
+    return files, modes
+
+
+def write_tree(target, files, modes):
+    # Regular files first: never write through a just-imported symlink.
+    for name, data in files.items():
+        p = target / name
+        if Path(name).is_absolute() or '..' in Path(name).parts:
+            raise ValueError(f'Unsafe AUR path: {name}')
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if modes[name] != 0o120000:
+            p.write_bytes(data)
+            p.chmod(modes[name] & 0o777)
+    for name, data in files.items():
+        if modes[name] == 0o120000:
+            destination = os.fsdecode(data)
+            if Path(destination).is_absolute():
+                raise ValueError(f'Absolute AUR symlink: {name}')
+            (target / name).symlink_to(destination)
+    for p in target.rglob('*'):
+        if p.is_symlink():
+            try:
+                p.resolve().relative_to(target.resolve())
+                try:
+                    p.stat()
+                except FileNotFoundError:
+                    pass  # An internal dangling link is still a valid Git entry.
+            except (ValueError, RuntimeError, OSError) as error:
+                raise ValueError(f'AUR symlink escapes recipe or loops: {p}') from error
 
 
 def lock_path(base):
@@ -97,15 +149,7 @@ def main():
             source = Path(tmp) / 'source'
             run('git', 'clone', '--quiet', f'https://aur.archlinux.org/{base}.git', str(source))
             commit = run('git', 'rev-parse', 'HEAD', cwd=source)
-            files = {}
-            modes = {}
-            for entry in run('git', 'ls-tree', '-r', 'HEAD', cwd=source).splitlines():
-                meta, name = entry.split('\t', 1)
-                mode, kind, sha = meta.split()
-                if mode not in ('100644', '100755') or kind != 'blob':
-                    raise ValueError(f'Unsupported AUR file: {name}')
-                modes[name] = int(mode, 8) & 0o777
-                files[name] = subprocess.check_output(['git', 'show', f'HEAD:{name}'], cwd=source)
+            files, modes = read_aur_tree(source)
             if 'PKGBUILD' not in files or '.SRCINFO' not in files:
                 raise ValueError(f'{base}: missing recipe metadata')
             state_path = root / lock_path(base)
@@ -134,14 +178,10 @@ def main():
             if target.exists():
                 shutil.rmtree(target)
             target.mkdir(parents=True)
-            for name, data in files.items():
-                p = target / name
-                p.parent.mkdir(parents=True, exist_ok=True)
-                p.write_bytes(data)
-                p.chmod(modes[name])
+            write_tree(target, files, modes)
             state_path = checkout / lock_path(base)
             state_path.parent.mkdir(exist_ok=True)
-            state_path.write_text(json.dumps({'commit': commit, 'digest': digest(files)}, indent=2, sort_keys=True) + '\n')
+            state_path.write_text(json.dumps({'commit': commit, 'digest': digest(tree(target))}, indent=2, sort_keys=True) + '\n')
             run('git', 'config', 'user.name', 'github-actions[bot]', cwd=checkout)
             run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com', cwd=checkout)
             run('git', 'add', f'packages/aur/{base}', lock_path(base), cwd=checkout)
