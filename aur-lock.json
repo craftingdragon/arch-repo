@@ -1,4 +1,8 @@
 {
+  "opengrep": {
+    "commit": "43d20c9ffccf3a41587e0de95376c06c16ecba2f",
+    "digest": "01906a7933226135d82acf91bb21123a561dfd4c187615986aef8dbfcba8778f"
+  },
   "qt6-opcua": {
     "commit": "83a31897562849f69a2f37fe4cecb3e272cff631",
     "digest": "cbb571fc2c3d088609503d925a75f62a552e2c40cac30a26f6bbbbc90b72e203"
