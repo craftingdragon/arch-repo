@@ -1,1 +1,6 @@
-{}
+{
+  "epics-base": {
+    "commit": "aa14eae812452e825cd13edde8fbd4bf0c2c8437",
+    "digest": "ecfbaede1d5d9297e001bf6e31b58233674c001cb30faece3fe5dc601b94ab4c"
+  }
+}
