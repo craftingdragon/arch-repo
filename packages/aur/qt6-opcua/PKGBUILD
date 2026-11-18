@@ -1,0 +1,49 @@
+# Maintainer: Julian Houba <info@craftingdragon.ch>
+# Contributor: Václav Kubernát <sir.venceslas@gmail.com> (maintainer of qt5 version)
+
+pkgname=qt6-opcua
+pkgver=6.12.0
+pkgrel=2
+pkgdesc='Qt 6 wrapper for existing OPC UA stacks'
+arch=('x86_64' 'aarch64')
+url='https://www.qt.io'
+license=(LGPL-3.0-only
+         GPL-2.0-only
+         LicenseRef-Qt-Commercial
+         MPL-2.0
+         CC0-1.0
+         CC-BY-SA-4.0
+         BSD-3-Clause
+         Apache-2.0
+         MIT)
+depends=('qt6-base' 'openssl')
+makedepends=('git' 'cmake' 'ninja' 'qt6-declarative')
+groups=('qt6')
+_pkgfqn=qtopcua
+source=("https://github.com/qt/$_pkgfqn/archive/refs/tags/v$pkgver.tar.gz"
+        'openssl-4-compat.patch')
+sha256sums=('c4eefbe575f9d8ae6402749d45c3a534c7cc3a5c4c7bf4d76dbcd78ed19891f4'
+            '0a244ab47551ac75de85378fa5887b49fd89e4bb51be6758eb40e17e79ca1579')
+
+prepare() {
+  patch -d "$_pkgfqn-$pkgver" -Np1 -i "$srcdir/openssl-4-compat.patch"
+}
+
+build() {
+  cmake -B build -S "$_pkgfqn-$pkgver" -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
+    -DCMAKE_C_FLAGS="$CFLAGS" \
+    -DQT_FEATURE_open62541=ON \
+    -DQT_BUILD_EXAMPLES=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+
+  # Install licenses
+  install -d "$pkgdir"/usr/share/licenses
+  ln -s /usr/share/licenses/qt6-base "$pkgdir"/usr/share/licenses/${pkgname}
+}
