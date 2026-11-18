@@ -9,6 +9,9 @@ spec = importlib.util.spec_from_file_location('updater', Path(__file__).with_nam
 updater = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(updater)
 updater.names(Path('aur.txt').read_text())
+fingerprint = Path('signing-fingerprint.txt').read_text().strip()
+if not re.fullmatch(r'(?:[0-9A-F]{40}|[0-9A-F]{64})', fingerprint):
+    raise SystemExit('signing-fingerprint.txt must contain one full uppercase hexadecimal fingerprint without spaces')
 seen = set()
 for recipe in Path('packages').glob('*/*/PKGBUILD'):
     base = recipe.parent.name
