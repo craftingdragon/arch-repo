@@ -11,6 +11,7 @@ docker-scout
 gridcraft
 grub2-theme-archlinux
 k6
+qt-sudo
 octopi
 neo-matrix
 onedrive-abraunegg-git
