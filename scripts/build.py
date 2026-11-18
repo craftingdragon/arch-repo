@@ -14,7 +14,10 @@ OUT = ROOT / 'out'
 
 
 def docker(recipe, script, extra=()):
-    subprocess.run(['docker', 'run', '--rm', '-v', f'{recipe}:/recipe:ro',
+    jobs = int(subprocess.check_output(['nproc'], text=True).strip())
+    if jobs < 1:
+        raise ValueError('Runner nproc must be positive')
+    subprocess.run(['docker', 'run', '--rm', '--env', f'RUNNER_NPROC={jobs}', '-v', f'{recipe}:/recipe:ro',
                     '-v', f'{OUT}:/out', 'archlinux:base', 'bash', '-euc', script, '--', *extra], check=True)
 
 
@@ -84,6 +87,7 @@ done
             before = set(OUT.glob('*.pkg.tar.zst'))
             try:
                 docker(recipe.parent, BOOT + r'''
+printf '\nMAKEFLAGS="-j%s"\n' "$RUNNER_NPROC" >> /etc/makepkg.conf
 runuser -u builder -- makepkg --printsrcinfo > /tmp/srcinfo
 python - <<'PY'
 from pathlib import Path
