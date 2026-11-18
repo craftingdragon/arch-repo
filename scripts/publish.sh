@@ -33,6 +33,8 @@ if ((${#packages[@]})); then
     cp "$archive.sig" "site/x86_64/$name.$kind.sig"
   done
 fi
+cp out/build-manifest.json site/build-manifest.json
+sign site/build-manifest.json
 export REPO_NAME="$name" REPO_FINGERPRINT="$fingerprint"
 python scripts/site.py
 [[ -z $(find site -type l -print -quit) ]]

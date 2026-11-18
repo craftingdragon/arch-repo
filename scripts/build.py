@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 """Build committed recipes in dependency order, using disposable Arch containers."""
 import json
+import hashlib
+import os
+import shutil
+import tempfile
+import reuse
 from pathlib import Path
 import subprocess
 
@@ -24,14 +29,61 @@ cd /home/builder/pkg
 
 def main():
     OUT.mkdir(exist_ok=True)
-    pending = sorted(ROOT.glob('packages/*/*/PKGBUILD'))
+    if any(OUT.iterdir()):
+        raise SystemExit('out/ must be empty before building')
+    recipes = sorted(ROOT.glob('packages/*/*/PKGBUILD'))
+    records = {}
+    implementation = hashlib.sha256(Path(__file__).read_bytes() + Path(reuse.__file__).read_bytes()).hexdigest()
+    with tempfile.TemporaryDirectory() as tmp:
+        meta = Path(tmp)
+        if recipes:
+            subprocess.run(['docker', 'run', '--rm', '-v', f'{ROOT}:/input:ro',
+                            '-v', f'{meta}:/meta', 'archlinux:base', 'bash', '-euc',
+                            BOOT.split('cp -a')[0] + '''
+i=0
+for recipe in "$@"; do
+  cp -a "$recipe" /home/builder/pkg-$i
+  chown -R builder:builder /home/builder/pkg-$i
+  (cd /home/builder/pkg-$i; runuser -u builder -- makepkg --printsrcinfo) > /meta/$i
+  i=$((i + 1))
+done
+''', '--', *['/input/' + str(p.parent.relative_to(ROOT)) for p in recipes]], check=True)
+        for i, recipe in enumerate(recipes):
+            base = str(recipe.parent.relative_to(ROOT))
+            records[base] = {'fingerprint': reuse.fingerprint(recipe.parent, implementation),
+                             'metadata': reuse.metadata((meta / str(i)).read_text()), 'outputs': []}
+    for base, edges in reuse.graph(records).items():
+        records[base]['dependencies'] = edges
+    url = os.environ.get('PAGES_URL', '')
+    forced = os.environ.get('FORCE_REBUILD', 'false').lower() == 'true'
+    previous = {} if forced else reuse.restore(url, ROOT / 'signing-fingerprint.txt', OUT)
+    dirty = {base: 'forced rebuild' if forced else 'recipe or build inputs changed'
+             for base, record in records.items()
+             if forced or previous.get(base, {}).get('fingerprint') != record['fingerprint']
+             or previous.get(base, {}).get('dependencies') != record['dependencies']
+             or previous.get(base, {}).get('metadata') != record['metadata']}
+    dirty = reuse.invalidate(records, previous, dirty)
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp)
+        for base in records:
+            if base not in dirty and not reuse.download(previous[base], url, staging):
+                dirty[base] = 'missing or invalid output archive'
+        dirty = reuse.invalidate(records, previous, dirty)
+        for base, record in records.items():
+            if base not in dirty:
+                record['outputs'] = previous[base]['outputs']
+                for output in record['outputs']:
+                    shutil.move(staging / output['filename'], OUT / output['filename'])
+            print(f'{base}: ' + ('rebuild: ' + dirty[base] if base in dirty else 'reuse verified published outputs'))
+    pending = [p for p in recipes if str(p.parent.relative_to(ROOT)) in dirty]
     # Install dependencies through pacman from official repos plus already built
     # packages. Retry packages whose dependencies are not yet available.
     while pending:
         progressed = False
         for recipe in pending[:]:
+            before = set(OUT.glob('*.pkg.tar.zst'))
             try:
-                docker(recipe.parent, BOOT + '''
+                docker(recipe.parent, BOOT + r'''
 runuser -u builder -- makepkg --printsrcinfo > /tmp/srcinfo
 python - <<'PY'
 from pathlib import Path
@@ -41,7 +93,7 @@ for line in Path('/tmp/srcinfo').read_text().splitlines():
     key, sep, value = line.strip().partition(' = ')
     if sep and key in fields:
         deps.append(value)
-Path('/tmp/deps').write_text('\\n'.join(dict.fromkeys(deps)))
+Path('/tmp/deps').write_text('\n'.join(dict.fromkeys(deps)))
 PY
 # Supply built packages through a temporary local repository, letting pacman
 # resolve split packages, provides, and version constraints.
@@ -51,7 +103,7 @@ if ((${#built[@]})); then
   mkdir /tmp/repo
   cp "${built[@]}" /tmp/repo/
   repo-add /tmp/repo/build.db.tar.gz /tmp/repo/*.pkg.tar.zst
-  printf '\\n[build]\\nSigLevel = Never\\nServer = file:///tmp/repo\\n' >> /etc/pacman.conf
+  printf '\n[build]\nSigLevel = Never\nServer = file:///tmp/repo\n' >> /etc/pacman.conf
   pacman -Sy --noconfirm
 fi
 mapfile -t deps < /tmp/deps
@@ -64,17 +116,34 @@ runuser -u builder -- env PKGEXT=.pkg.tar.zst makepkg --cleanbuild --noconfirm
 for package in *.pkg.tar.zst; do
   [[ ! -e /out/"$package" ]] || { echo "Duplicate output package: $package"; exit 1; }
   cp -- "$package" /out/
+  bsdtar -xOf "$package" .PKGINFO > /out/"$package".meta
 done
 ''')
             except subprocess.CalledProcessError as error:
                 if error.returncode == 42:
                     continue
                 raise
+            record = records[str(recipe.parent.relative_to(ROOT))]
+            for archive in sorted(set(OUT.glob('*.pkg.tar.zst')) - before):
+                info_path = archive.with_name(archive.name + '.meta')
+                info = reuse.metadata(info_path.read_text())
+                record['outputs'].append({'filename': archive.name, 'sha256': reuse.sha(archive),
+                                          'name': info['pkgname'][0], 'version': info['pkgver'][0],
+                                          'architecture': info['arch'][0]})
+                info_path.unlink()
+            if not record['outputs']:
+                raise SystemExit(f'No package outputs: {recipe.parent}')
             pending.remove(recipe)
             progressed = True
         if not progressed:
             raise SystemExit('Unresolved dependencies or dependency cycle: ' + ', '.join(str(p.parent) for p in pending))
-    (OUT / 'build.json').write_text(json.dumps({'recipes': len(list(ROOT.glob('packages/*/*/PKGBUILD')))}))
+    manifest = {'schema': 1, 'architecture': 'x86_64', 'recipes': records}
+    (OUT / 'build-manifest.json').write_text(json.dumps(manifest, sort_keys=True, indent=2) + '\n')
+    summary = f"Rebuilt: {len(dirty)}; reused: {len(records) - len(dirty)} recipes"
+    print(summary)
+    if os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as output:
+            output.write(summary + '\n')
 
 
 if __name__ == '__main__':

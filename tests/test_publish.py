@@ -1,5 +1,6 @@
 """End-to-end repository publication using a disposable signing key."""
 import os
+import json
 from pathlib import Path
 import shutil
 import subprocess
@@ -15,6 +16,7 @@ class PublishTests(unittest.TestCase):
             shutil.copytree('scripts', root / 'scripts')
             (root / 'repo-name.txt').write_text('testrepo\n')
             (root / 'out').mkdir()
+            (root / 'out/build-manifest.json').write_text(json.dumps({'schema': 1, 'architecture': 'x86_64', 'recipes': {}}))
             home = root / 'keyring'
             home.mkdir(mode=0o700)
             env = dict(os.environ, GNUPGHOME=str(home))
@@ -29,11 +31,28 @@ class PublishTests(unittest.TestCase):
             info = root / '.PKGINFO'
             info.write_text('pkgname = smoke\npkgbase = smoke\npkgver = 1.0-1\npkgdesc = Smoke package\nurl = https://example.invalid\nbuilddate = 1\npackager = Test\nsize = 0\narch = any\nlicense = MIT\n')
             run('bsdtar', '--zstd', '-cf', 'out/smoke-1.0-1-any.pkg.tar.zst', '.PKGINFO')
+            import sys
+            sys.path.insert(0, str(Path('scripts').resolve()))
+            import reuse
+            archive = root / 'out/smoke-1.0-1-any.pkg.tar.zst'
+            record = {'fingerprint': 'test', 'dependencies': [], 'outputs': [
+                {'filename': archive.name, 'sha256': reuse.sha(archive), 'name': 'smoke', 'version': '1.0-1', 'architecture': 'any'}]}
+            (root / 'out/build-manifest.json').write_text(json.dumps({'schema': 1, 'architecture': 'x86_64', 'recipes': {'smoke': record}}))
             run('bash', 'scripts/publish.sh')
+            restored = reuse.restore((root / 'site').as_uri(), root / 'signing-fingerprint.txt', root / 'out')
+            self.assertEqual(restored, {'smoke': record})
+            (root / 'wrong-fingerprint').write_text('0' * 40)
+            self.assertEqual(reuse.restore((root / 'site').as_uri(), root / 'wrong-fingerprint', root / 'out'), {})
+            manifest = root / 'site/build-manifest.json'
+            original = manifest.read_bytes()
+            manifest.write_bytes(original + b' ')
+            self.assertEqual(reuse.restore((root / 'site').as_uri(), root / 'signing-fingerprint.txt', root / 'out'), {})
+            manifest.write_bytes(original)
             site = root / 'site/x86_64'
             self.assertFalse(any(p.is_symlink() for p in site.iterdir()))
             for name in ['testrepo.db', 'testrepo.files', 'smoke-1.0-1-any.pkg.tar.zst']:
                 run('gpg', '--verify', str(site / (name + '.sig')), str(site / name))
+            run('gpg', '--verify', str(root / 'site/build-manifest.json.sig'), str(root / 'site/build-manifest.json'))
             self.assertIn('smoke-1.0', (root / 'site/index.html').read_text())
             self.assertIn('SigLevel = Required DatabaseRequired', (root / 'site/index.html').read_text())
             self.assertIn('smoke-1.0-1/desc', run('bsdtar', '-tf', str(site / 'testrepo.db')).decode())
