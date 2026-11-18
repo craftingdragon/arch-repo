@@ -53,7 +53,7 @@ class PublishTests(unittest.TestCase):
             for name in ['testrepo.db', 'testrepo.files', 'smoke-1.0-1-any.pkg.tar.zst']:
                 run('gpg', '--verify', str(site / (name + '.sig')), str(site / name))
             run('gpg', '--verify', str(root / 'site/build-manifest.json.sig'), str(root / 'site/build-manifest.json'))
-            self.assertIn('smoke-1.0', (root / 'site/index.html').read_text())
+            self.assertIn('smoke-1.0', (root / 'site/packages.html').read_text())
             self.assertIn('SigLevel = Required DatabaseRequired', (root / 'site/index.html').read_text())
             self.assertIn('smoke-1.0-1/desc', run('bsdtar', '-tf', str(site / 'testrepo.db')).decode())
             (root / 'signing-fingerprint.txt').write_text('INVALID')
