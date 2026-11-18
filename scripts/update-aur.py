@@ -47,15 +47,17 @@ def tree(directory):
     return files
 
 
-def read_aur_tree(source):
+def read_aur_tree(source, revision="HEAD", prefix=""):
     files, modes = {}, {}
-    entries = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'], cwd=source)
+    entries = subprocess.check_output(['git', 'ls-tree', '-rz', revision, *(['--', prefix] if prefix else [])], cwd=source)
     for entry in entries.split(b'\0'):
         if not entry:
             continue
         meta, raw_name = entry.split(b'\t', 1)
         mode, kind, sha = meta.decode().split()
         name = os.fsdecode(raw_name)
+        if prefix:
+            name = name.removeprefix(prefix.rstrip('/') + '/')
         if mode not in ('100644', '100755', '120000') or kind != 'blob':
             raise ValueError(f'Unsupported AUR file: {name} (mode {mode}, type {kind})')
         modes[name] = int(mode, 8)
@@ -104,7 +106,7 @@ def read_proposed_lock(checkout, base):
     raise ValueError(f'{base}: proposal has no lock metadata')
 
 
-def proposal_state(checkout, remote, branch, base, commit, existing):
+def proposal_state(checkout, remote, branch, base, commit, existing, vcs_sources=None):
     """Find the branch independently of PR state; return lease and up-to-date flag."""
     ref = f'refs/heads/{branch}'
     advertised = run('git', 'ls-remote', '--heads', remote, ref, cwd=checkout)
@@ -119,6 +121,12 @@ def proposal_state(checkout, remote, branch, base, commit, existing):
     if run('git', 'rev-parse', 'FETCH_HEAD', cwd=checkout) != head:
         raise ValueError(f'{base}: branch changed during update')
     messages = run('git', 'log', '--format=%s', 'origin/master..FETCH_HEAD', cwd=checkout).splitlines()
+    if not messages and not existing:
+        ancestor = run('git', 'merge-base', 'origin/master', head, cwd=checkout)
+        if ancestor == head:
+            # A closed, already-merged proposal can supply the lease for the
+            # next update without requiring deletion of its remote branch.
+            return head, False
     if not messages or any(not m.startswith(f'aur-bot: {base} ') for m in messages):
         raise ValueError(f'{base}: branch contains human edits or has no bot proposal')
     changed = run('git', 'diff', '--name-only', 'origin/master...FETCH_HEAD', cwd=checkout).splitlines()
@@ -127,13 +135,40 @@ def proposal_state(checkout, remote, branch, base, commit, existing):
     proposed = read_proposed_lock(checkout, base)
     # An unchanged AUR revision is already proposed. Advancing master alone
     # must not rewrite that commit or reset an in-progress review.
-    return head, proposed.get('commit') == commit
+    return head, (proposed.get('commit') == commit
+                  and proposed.get('vcs_sources', {}) == (vcs_sources or {}))
 
 
-def ensure_pr(repo, branch, base, commit, existing):
+def snapshot_digest(files, modes):
+    return digest({name: ('symlink', data) if modes[name] == 0o120000 else data
+                   for name, data in files.items()})
+
+
+def proposal_complete(checkout, base):
+    state = read_proposed_lock(checkout, base)
+    files, modes = read_aur_tree(checkout, 'FETCH_HEAD', f'packages/aur/{base}')
+    return snapshot_digest(files, modes) == state.get('digest')
+
+
+def stage_snapshot(checkout, base):
+    path = f'packages/aur/{base}'
+    # AUR can track files excluded by its own .gitignore. Import its complete
+    # tracked snapshot instead of applying the source repository's ignore rules.
+    run('git', 'add', '--force', '--', path, lock_path(base), cwd=checkout)
+    staged = run('git', 'write-tree', cwd=checkout)
+    files, modes = read_aur_tree(checkout, staged, path)
+    expected = json.loads((checkout / lock_path(base)).read_text())['digest']
+    if snapshot_digest(files, modes) != expected:
+        raise ValueError(f'{base}: staged files differ from imported AUR snapshot')
+
+
+def ensure_pr(repo, branch, base, commit, existing, vcs_sources=None):
     body = (f'Review all recipe and supporting-file changes before merging.\n\n'
             f'Upstream: https://aur.archlinux.org/cgit/aur.git/commit/?h={base}&id={commit}\n\n'
             'No recipe code was executed by the updater.')
+    if vcs_sources:
+        body += '\n\nProposed upstream Git revisions:\n' + '\n'.join(
+            f'- `{source}` → `{sha}`' for source, sha in sorted(vcs_sources.items()))
     if existing:
         run('gh', 'pr', 'edit', str(existing[0]['number']), '--repo', repo, '--body', body)
     else:
@@ -142,6 +177,8 @@ def ensure_pr(repo, branch, base, commit, existing):
 
 
 def main():
+    import vcs
+    import reuse
     root = Path.cwd()
     repo = os.environ['GITHUB_REPOSITORY']
     for base in names(Path('aur.txt').read_text()):
@@ -154,7 +191,8 @@ def main():
                 raise ValueError(f'{base}: missing recipe metadata')
             state_path = root / lock_path(base)
             previous = json.loads(state_path.read_text()) if state_path.exists() else None
-            if previous and previous['commit'] == commit:
+            vcs_sources = vcs.resolve(reuse.metadata(files['.SRCINFO'].decode())) if base.endswith('-git') else {}
+            if previous and previous['commit'] == commit and previous.get('vcs_sources', {}) == vcs_sources:
                 continue
             dest = root / 'packages' / 'aur' / base
             current = tree(dest) if dest.exists() else {}
@@ -167,12 +205,17 @@ def main():
             run('git', 'clone', '--quiet', '--no-hardlinks', str(root), str(checkout))
             run('git', 'checkout', '-B', branch, 'origin/master', cwd=checkout)
             remote = f'https://github.com/{repo}.git'
-            lease, up_to_date = proposal_state(checkout, remote, branch, base, commit, existing)
+            lease, up_to_date = proposal_state(checkout, remote, branch, base, commit, existing, vcs_sources)
             if up_to_date:
-                if not existing:
-                    ensure_pr(repo, branch, base, commit, existing)
-                print(f'{base}: AUR revision already proposed; preserving branch')
-                continue
+                if proposal_complete(checkout, base):
+                    if not existing:
+                        ensure_pr(repo, branch, base, commit, existing, vcs_sources)
+                    print(f'{base}: AUR revision already proposed; preserving branch')
+                    continue
+                # Preserve the existing bot commit and append a repair for an
+                # incomplete import, even though its AUR revision is unchanged.
+                run('git', 'reset', '--hard', lease, cwd=checkout)
+                print(f'{base}: repairing incomplete AUR import with an additional commit')
             target = checkout / 'packages' / 'aur' / base
             import shutil
             if target.exists():
@@ -181,14 +224,17 @@ def main():
             write_tree(target, files, modes)
             state_path = checkout / lock_path(base)
             state_path.parent.mkdir(exist_ok=True)
-            state_path.write_text(json.dumps({'commit': commit, 'digest': digest(tree(target))}, indent=2, sort_keys=True) + '\n')
+            state = {'commit': commit, 'digest': digest(tree(target))}
+            if base.endswith('-git'):
+                state['vcs_sources'] = vcs_sources
+            state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + '\n')
             run('git', 'config', 'user.name', 'github-actions[bot]', cwd=checkout)
             run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com', cwd=checkout)
-            run('git', 'add', f'packages/aur/{base}', lock_path(base), cwd=checkout)
+            stage_snapshot(checkout, base)
             run('git', 'commit', '-qm', f'aur-bot: {base} {commit}', cwd=checkout)
             run('git', 'remote', 'set-url', 'origin', f'https://github.com/{repo}.git', cwd=checkout)
             run('git', 'push', f'--force-with-lease=refs/heads/{branch}:{lease}', 'origin', branch, cwd=checkout)
-            ensure_pr(repo, branch, base, commit, existing)
+            ensure_pr(repo, branch, base, commit, existing, vcs_sources)
 
 
 if __name__ == '__main__':

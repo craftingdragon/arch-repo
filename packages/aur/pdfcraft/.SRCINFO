@@ -1,0 +1,23 @@
+pkgbase = pdfcraft
+	pkgdesc = vibe coded clean-room reimplementation of Adobe Acrobat
+	pkgver = 0.21.1
+	pkgrel = 1
+	url = https://getartcraft.com/apps/pdfcraft
+	arch = x86_64
+	license = MIT
+	license = Apache-2.0
+	makedepends = cargo
+	depends = glibc
+	depends = hicolor-icon-theme
+	depends = libgcc
+	provides = printcraft
+	conflicts = printcraft
+	replaces = printcraft
+	source = https://github.com/storytold/pdfcraft/archive/refs/tags/v0.21.1/pdfcraft-0.21.1.tar.gz
+	sha256sums = d6cb5a437aa531fe3ae91250e2b6aa52cf4208cc521c17fc30aeccc917c0e9f5
+
+pkgname = pdfcraft
+	depends = glibc
+	depends = hicolor-icon-theme
+	depends = libgcc
+	depends = libgcc_s.so
