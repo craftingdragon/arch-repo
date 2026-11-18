@@ -95,7 +95,7 @@ class ProposalRecoveryTests(unittest.TestCase):
             updater.ensure_pr('owner/repo', 'aur-update/example', 'example', 'upstream1', [{'number': 42}])
         self.assertEqual(call.call_args.args[:4], ('gh', 'pr', 'edit', '42'))
 
-    def test_master_advance_refreshes_same_upstream_proposal(self):
+    def test_master_advance_preserves_same_upstream_proposal(self):
         head = self.proposal()
         self.git('checkout', '-q', 'master')
         (self.repo / 'README').write_text('Updated master')
@@ -103,9 +103,11 @@ class ProposalRecoveryTests(unittest.TestCase):
         self.git('commit', '-qm', 'Update master')
         self.git('push', '-q', 'origin', 'master')
         self.git('fetch', '-q', 'origin')
-        self.assertEqual(self.state(), (head, False))
+        self.assertEqual(self.state(), (head, True))
+        self.assertEqual(self.state(), (head, True))
+        self.assertEqual(self.git('ls-remote', '--heads', self.remote, 'aur-update/example').split()[0], head)
 
-    def test_legacy_shared_lock_proposal_is_refreshed(self):
+    def test_legacy_shared_lock_same_revision_is_preserved(self):
         import json
         self.proposal()
         self.git('rm', '.aur-locks/example.json')
@@ -113,7 +115,7 @@ class ProposalRecoveryTests(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'aur-bot: example legacy metadata')
         self.git('push', '-q', 'origin', 'aur-update/example')
-        self.assertEqual(self.state(), (self.git('rev-parse', 'HEAD'), False))
+        self.assertEqual(self.state(), (self.git('rev-parse', 'HEAD'), True))
 
     def test_independent_package_imports_merge_without_conflicts(self):
         import json

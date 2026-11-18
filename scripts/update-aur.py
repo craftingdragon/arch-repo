@@ -73,12 +73,9 @@ def proposal_state(checkout, remote, branch, base, commit, existing):
     if any(p not in ('aur-lock.json', lock_path(base)) and not p.startswith(f'packages/aur/{base}/') for p in changed):
         raise ValueError(f'{base}: branch contains unrelated changes')
     proposed = read_proposed_lock(checkout, base)
-    master = run('git', 'rev-parse', 'origin/master', cwd=checkout)
-    ancestor = run('git', 'merge-base', 'origin/master', 'FETCH_HEAD', cwd=checkout)
-    # Regenerate stale/legacy bot proposals on current master instead of merging
-    # shared lock-file conflicts or restoring unrelated packages' old metadata.
-    current = ancestor == master and 'aur-lock.json' not in changed
-    return head, current and proposed.get('commit') == commit
+    # An unchanged AUR revision is already proposed. Advancing master alone
+    # must not rewrite that commit or reset an in-progress review.
+    return head, proposed.get('commit') == commit
 
 
 def ensure_pr(repo, branch, base, commit, existing):
@@ -128,7 +125,9 @@ def main():
             remote = f'https://github.com/{repo}.git'
             lease, up_to_date = proposal_state(checkout, remote, branch, base, commit, existing)
             if up_to_date:
-                ensure_pr(repo, branch, base, commit, existing)
+                if not existing:
+                    ensure_pr(repo, branch, base, commit, existing)
+                print(f'{base}: AUR revision already proposed; preserving branch')
                 continue
             target = checkout / 'packages' / 'aur' / base
             import shutil
