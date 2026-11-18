@@ -1,0 +1,21 @@
+name: Check recipes and automation
+on:
+  pull_request:
+  push:
+    branches: [master]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: python -m unittest discover -s tests -v
+      - name: Check syntax without running recipes
+        run: |
+          python -m compileall -q scripts
+          python scripts/check.py
+          bash -n scripts/publish.sh
+          find packages -name PKGBUILD -print0 | xargs -0 -r -n1 bash -n
