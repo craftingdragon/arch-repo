@@ -39,6 +39,19 @@ def tree(directory):
             for p in directory.rglob('*') if p.is_file()}
 
 
+def lock_path(base):
+    return f'.aur-locks/{base}.json'
+
+
+def read_proposed_lock(checkout, base):
+    paths = run('git', 'ls-tree', '--name-only', 'FETCH_HEAD', '--', lock_path(base), 'aur-lock.json', cwd=checkout).splitlines()
+    if lock_path(base) in paths:
+        return json.loads(run('git', 'show', f'FETCH_HEAD:{lock_path(base)}', cwd=checkout))
+    if 'aur-lock.json' in paths:
+        return json.loads(run('git', 'show', 'FETCH_HEAD:aur-lock.json', cwd=checkout)).get(base, {})
+    raise ValueError(f'{base}: proposal has no lock metadata')
+
+
 def proposal_state(checkout, remote, branch, base, commit, existing):
     """Find the branch independently of PR state; return lease and up-to-date flag."""
     ref = f'refs/heads/{branch}'
@@ -57,10 +70,15 @@ def proposal_state(checkout, remote, branch, base, commit, existing):
     if not messages or any(not m.startswith(f'aur-bot: {base} ') for m in messages):
         raise ValueError(f'{base}: branch contains human edits or has no bot proposal')
     changed = run('git', 'diff', '--name-only', 'origin/master...FETCH_HEAD', cwd=checkout).splitlines()
-    if any(p != 'aur-lock.json' and not p.startswith(f'packages/aur/{base}/') for p in changed):
+    if any(p not in ('aur-lock.json', lock_path(base)) and not p.startswith(f'packages/aur/{base}/') for p in changed):
         raise ValueError(f'{base}: branch contains unrelated changes')
-    proposed = json.loads(run('git', 'show', 'FETCH_HEAD:aur-lock.json', cwd=checkout))
-    return head, proposed.get(base, {}).get('commit') == commit
+    proposed = read_proposed_lock(checkout, base)
+    master = run('git', 'rev-parse', 'origin/master', cwd=checkout)
+    ancestor = run('git', 'merge-base', 'origin/master', 'FETCH_HEAD', cwd=checkout)
+    # Regenerate stale/legacy bot proposals on current master instead of merging
+    # shared lock-file conflicts or restoring unrelated packages' old metadata.
+    current = ancestor == master and 'aur-lock.json' not in changed
+    return head, current and proposed.get('commit') == commit
 
 
 def ensure_pr(repo, branch, base, commit, existing):
@@ -77,7 +95,6 @@ def ensure_pr(repo, branch, base, commit, existing):
 def main():
     root = Path.cwd()
     repo = os.environ['GITHUB_REPOSITORY']
-    lock = json.loads(Path('aur-lock.json').read_text())
     for base in names(Path('aur.txt').read_text()):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / 'source'
@@ -94,7 +111,8 @@ def main():
                 files[name] = subprocess.check_output(['git', 'show', f'HEAD:{name}'], cwd=source)
             if 'PKGBUILD' not in files or '.SRCINFO' not in files:
                 raise ValueError(f'{base}: missing recipe metadata')
-            previous = lock.get(base)
+            state_path = root / lock_path(base)
+            previous = json.loads(state_path.read_text()) if state_path.exists() else None
             if previous and previous['commit'] == commit:
                 continue
             dest = root / 'packages' / 'aur' / base
@@ -122,12 +140,12 @@ def main():
                 p.parent.mkdir(parents=True, exist_ok=True)
                 p.write_bytes(data)
                 p.chmod(modes[name])
-            updated = dict(lock)
-            updated[base] = {'commit': commit, 'digest': digest(files)}
-            (checkout / 'aur-lock.json').write_text(json.dumps(updated, indent=2, sort_keys=True) + '\n')
+            state_path = checkout / lock_path(base)
+            state_path.parent.mkdir(exist_ok=True)
+            state_path.write_text(json.dumps({'commit': commit, 'digest': digest(files)}, indent=2, sort_keys=True) + '\n')
             run('git', 'config', 'user.name', 'github-actions[bot]', cwd=checkout)
             run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com', cwd=checkout)
-            run('git', 'add', 'packages/aur', 'aur-lock.json', cwd=checkout)
+            run('git', 'add', f'packages/aur/{base}', lock_path(base), cwd=checkout)
             run('git', 'commit', '-qm', f'aur-bot: {base} {commit}', cwd=checkout)
             run('git', 'remote', 'set-url', 'origin', f'https://github.com/{repo}.git', cwd=checkout)
             run('git', 'push', f'--force-with-lease=refs/heads/{branch}:{lease}', 'origin', branch, cwd=checkout)

@@ -9,7 +9,6 @@ spec = importlib.util.spec_from_file_location('updater', Path(__file__).with_nam
 updater = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(updater)
 updater.names(Path('aur.txt').read_text())
-lock = json.loads(Path('aur-lock.json').read_text())
 seen = set()
 for recipe in Path('packages').glob('*/*/PKGBUILD'):
     base = recipe.parent.name
@@ -17,7 +16,8 @@ for recipe in Path('packages').glob('*/*/PKGBUILD'):
         raise SystemExit(f'Duplicate local/AUR package base: {base}')
     seen.add(base)
     if recipe.parent.parent.name == 'aur':
-        state = lock.get(base)
+        lock = Path(updater.lock_path(base))
+        state = json.loads(lock.read_text()) if lock.exists() else None
         if not state or not re.fullmatch('[0-9a-f]{40}', state['commit']):
             raise SystemExit(f'{base}: missing or invalid AUR lock')
         if updater.digest(updater.tree(recipe.parent)) != state['digest']:

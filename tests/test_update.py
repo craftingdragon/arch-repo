@@ -33,7 +33,7 @@ class ProposalRecoveryTests(unittest.TestCase):
         self.git('config', 'commit.gpgsign', 'false')
         self.git('config', 'user.name', 'Test')
         self.git('config', 'user.email', 'test@example.invalid')
-        (self.repo / 'aur-lock.json').write_text('{}\n')
+        (self.repo / 'README').write_text('Initial state\n')
         self.git('add', '.')
         self.git('commit', '-qm', 'Initial state')
         self.git('clone', '--bare', '-q', str(self.repo), self.remote)
@@ -49,7 +49,8 @@ class ProposalRecoveryTests(unittest.TestCase):
         package = self.repo / 'packages/aur/example'
         package.mkdir(parents=True, exist_ok=True)
         (package / 'PKGBUILD').write_text('pkgname=example\n')
-        (self.repo / 'aur-lock.json').write_text(json.dumps({'example': {'commit': 'upstream1'}}))
+        (self.repo / '.aur-locks').mkdir(exist_ok=True)
+        (self.repo / '.aur-locks/example.json').write_text(json.dumps({'commit': 'upstream1'}))
         self.git('add', '.')
         self.git('commit', '-qm', message)
         self.git('push', '-q', 'origin', 'aur-update/example')
@@ -93,3 +94,42 @@ class ProposalRecoveryTests(unittest.TestCase):
         with patch.object(updater, 'run') as call:
             updater.ensure_pr('owner/repo', 'aur-update/example', 'example', 'upstream1', [{'number': 42}])
         self.assertEqual(call.call_args.args[:4], ('gh', 'pr', 'edit', '42'))
+
+    def test_master_advance_refreshes_same_upstream_proposal(self):
+        head = self.proposal()
+        self.git('checkout', '-q', 'master')
+        (self.repo / 'README').write_text('Updated master')
+        self.git('add', 'README')
+        self.git('commit', '-qm', 'Update master')
+        self.git('push', '-q', 'origin', 'master')
+        self.git('fetch', '-q', 'origin')
+        self.assertEqual(self.state(), (head, False))
+
+    def test_legacy_shared_lock_proposal_is_refreshed(self):
+        import json
+        self.proposal()
+        self.git('rm', '.aur-locks/example.json')
+        (self.repo / 'aur-lock.json').write_text(json.dumps({'example': {'commit': 'upstream1'}}))
+        self.git('add', '.')
+        self.git('commit', '-qm', 'aur-bot: example legacy metadata')
+        self.git('push', '-q', 'origin', 'aur-update/example')
+        self.assertEqual(self.state(), (self.git('rev-parse', 'HEAD'), False))
+
+    def test_independent_package_imports_merge_without_conflicts(self):
+        import json
+        self.proposal()
+        self.git('checkout', '-q', 'master')
+        self.git('checkout', '-qb', 'aur-update/other')
+        (self.repo / '.aur-locks').mkdir(exist_ok=True)
+        (self.repo / '.aur-locks/other.json').write_text(json.dumps({'commit': 'other1'}))
+        other = self.repo / 'packages/aur/other'
+        other.mkdir(parents=True)
+        (other / 'PKGBUILD').write_text('pkgname=other')
+        self.git('add', '.')
+        self.git('commit', '-qm', 'aur-bot: other import')
+        self.git('checkout', '-q', 'master')
+        self.git('merge', '--no-edit', 'aur-update/example')
+        self.git('merge', '--no-edit', 'aur-update/other')
+        for base in ('example', 'other'):
+            self.assertTrue((self.repo / updater.lock_path(base)).exists())
+            self.assertTrue((self.repo / 'packages/aur' / base / 'PKGBUILD').exists())
