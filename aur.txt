@@ -5,4 +5,3 @@ qt6-opcua
 caqtdm-git
 caqtdm
 opengrep
-git-xet

@@ -1,8 +1,4 @@
 {
-  "git-xet": {
-    "commit": "b28b0830fc8581aed002907cd46919bf560af142",
-    "digest": "1977742d3f6b0b25cf29a8dbef63e35d9e7f9fedea12573c0ed8525df7713a6c"
-  },
   "opengrep": {
     "commit": "43d20c9ffccf3a41587e0de95376c06c16ecba2f",
     "digest": "01906a7933226135d82acf91bb21123a561dfd4c187615986aef8dbfcba8778f"
