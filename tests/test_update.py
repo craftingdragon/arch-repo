@@ -180,3 +180,37 @@ class SymlinkImportTests(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 with self.assertRaises(ValueError):
                     updater.write_tree(Path(tmp), links, {name: 0o120000 for name in links})
+
+
+class IgnoredTrackedFilesTests(unittest.TestCase):
+    def test_force_stage_and_append_repair(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            checkout = Path(tmp)
+            updater.run('git', 'init', '-q', '-b', 'master', cwd=checkout)
+            updater.run('git', 'config', 'user.name', 'Test', cwd=checkout)
+            updater.run('git', 'config', 'user.email', 'test@example.invalid', cwd=checkout)
+            target = checkout / 'packages/aur/example'
+            target.mkdir(parents=True)
+            for name, data in {'.gitignore': '*\n!PKGBUILD\n!.SRCINFO\n!.gitignore\n',
+                               'PKGBUILD': 'pkgname=example', '.SRCINFO': 'pkgbase = example',
+                               'example.desktop': 'desktop', 'example.sh': 'script'}.items():
+                (target / name).write_text(data)
+            lock = checkout / updater.lock_path('example')
+            lock.parent.mkdir()
+            lock.write_text(json.dumps({'commit': 'upstream1', 'digest': updater.digest(updater.tree(target))}))
+            updater.run('git', 'add', '.', cwd=checkout)
+            updater.run('git', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'aur-bot: example upstream1', cwd=checkout)
+            original = updater.run('git', 'rev-parse', 'HEAD', cwd=checkout)
+            updater.run('git', 'fetch', '.', 'master', cwd=checkout)
+            self.assertFalse(updater.proposal_complete(checkout, 'example'))
+            updater.stage_snapshot(checkout, 'example')
+            updater.run('git', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'aur-bot: example repair', cwd=checkout)
+            self.assertEqual(updater.run('git', 'rev-parse', 'HEAD^', cwd=checkout), original)
+            updater.run('git', 'fetch', '.', 'master', cwd=checkout)
+            self.assertTrue(updater.proposal_complete(checkout, 'example'))
+            files, _ = updater.read_aur_tree(checkout, 'HEAD', 'packages/aur/example')
+            self.assertIn('example.desktop', files)
+            self.assertIn('example.sh', files)
