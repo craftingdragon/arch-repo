@@ -135,3 +135,48 @@ class ProposalRecoveryTests(unittest.TestCase):
         for base in ('example', 'other'):
             self.assertTrue((self.repo / updater.lock_path(base)).exists())
             self.assertTrue((self.repo / 'packages/aur' / base / 'PKGBUILD').exists())
+
+
+class SymlinkImportTests(unittest.TestCase):
+    def test_git_symlink_import_lock_and_build_fingerprint(self):
+        import tempfile
+        import sys
+        from pathlib import Path
+        sys.path.insert(0, str(Path('scripts').resolve()))
+        import reuse
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / 'source'
+            source.mkdir()
+            updater.run('git', 'init', '-q', cwd=source)
+            updater.run('git', 'config', 'user.name', 'Test', cwd=source)
+            updater.run('git', 'config', 'user.email', 'test@example.invalid', cwd=source)
+            (source / 'LICENSE').write_text('license')
+            (source / 'LICENSES').mkdir()
+            (source / 'LICENSES/0BSD.txt').symlink_to('../LICENSE')
+            (source / 'broken').symlink_to('missing')
+            (source / 'script with spaces').write_text('#!/bin/sh\n')
+            (source / 'script with spaces').chmod(0o755)
+            updater.run('git', 'add', '.', cwd=source)
+            updater.run('git', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'Fixture', cwd=source)
+            files, modes = updater.read_aur_tree(source)
+            target = Path(tmp) / 'target'
+            target.mkdir()
+            updater.write_tree(target, files, modes)
+            self.assertEqual((target / 'LICENSES/0BSD.txt').readlink(), Path('../LICENSE'))
+            self.assertEqual((target / 'LICENSES/0BSD.txt').read_text(), 'license')
+            self.assertTrue((target / 'script with spaces').stat().st_mode & 0o111)
+            first = updater.digest(updater.tree(target))
+            first_build = reuse.fingerprint(target, 'build')
+            (target / 'broken').unlink()
+            (target / 'broken').symlink_to('another-missing')
+            self.assertNotEqual(first, updater.digest(updater.tree(target)))
+            self.assertNotEqual(first_build, reuse.fingerprint(target, 'build'))
+
+    def test_unsafe_symlinks_are_rejected(self):
+        import tempfile
+        from pathlib import Path
+        for links in ({'link': b'/etc/passwd'}, {'link': b'../outside'},
+                      {'a': b'b', 'b': b'a'}):
+            with tempfile.TemporaryDirectory() as tmp:
+                with self.assertRaises(ValueError):
+                    updater.write_tree(Path(tmp), links, {name: 0o120000 for name in links})

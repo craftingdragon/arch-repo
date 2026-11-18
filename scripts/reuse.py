@@ -22,8 +22,16 @@ def fingerprint(recipe, implementation):
     entries = []
     for p in sorted(recipe.rglob('*')):
         if p.is_symlink():
-            raise ValueError(f'Recipe symlink unsupported: {p}')
-        if p.is_file():
+            try:
+                p.resolve().relative_to(recipe.resolve())
+                try:
+                    p.stat()
+                except FileNotFoundError:
+                    pass  # An internal dangling link is still a valid Git entry.
+            except (ValueError, RuntimeError, OSError) as error:
+                raise ValueError(f'Recipe symlink escapes recipe or loops: {p}') from error
+            entries.append([str(p.relative_to(recipe)), 'symlink', str(p.readlink())])
+        elif p.is_file():
             entries.append([str(p.relative_to(recipe)), bool(p.stat().st_mode & 0o111), sha(p)])
     return hashlib.sha256(json.dumps(['x86_64', implementation, entries]).encode()).hexdigest()
 
