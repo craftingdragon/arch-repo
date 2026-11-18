@@ -47,15 +47,17 @@ def tree(directory):
     return files
 
 
-def read_aur_tree(source):
+def read_aur_tree(source, revision="HEAD", prefix=""):
     files, modes = {}, {}
-    entries = subprocess.check_output(['git', 'ls-tree', '-rz', 'HEAD'], cwd=source)
+    entries = subprocess.check_output(['git', 'ls-tree', '-rz', revision, *(['--', prefix] if prefix else [])], cwd=source)
     for entry in entries.split(b'\0'):
         if not entry:
             continue
         meta, raw_name = entry.split(b'\t', 1)
         mode, kind, sha = meta.decode().split()
         name = os.fsdecode(raw_name)
+        if prefix:
+            name = name.removeprefix(prefix.rstrip('/') + '/')
         if mode not in ('100644', '100755', '120000') or kind != 'blob':
             raise ValueError(f'Unsupported AUR file: {name} (mode {mode}, type {kind})')
         modes[name] = int(mode, 8)
@@ -130,6 +132,29 @@ def proposal_state(checkout, remote, branch, base, commit, existing):
     return head, proposed.get('commit') == commit
 
 
+def snapshot_digest(files, modes):
+    return digest({name: ('symlink', data) if modes[name] == 0o120000 else data
+                   for name, data in files.items()})
+
+
+def proposal_complete(checkout, base):
+    state = read_proposed_lock(checkout, base)
+    files, modes = read_aur_tree(checkout, 'FETCH_HEAD', f'packages/aur/{base}')
+    return snapshot_digest(files, modes) == state.get('digest')
+
+
+def stage_snapshot(checkout, base):
+    path = f'packages/aur/{base}'
+    # AUR can track files excluded by its own .gitignore. Import its complete
+    # tracked snapshot instead of applying the source repository's ignore rules.
+    run('git', 'add', '--force', '--', path, lock_path(base), cwd=checkout)
+    staged = run('git', 'write-tree', cwd=checkout)
+    files, modes = read_aur_tree(checkout, staged, path)
+    expected = json.loads((checkout / lock_path(base)).read_text())['digest']
+    if snapshot_digest(files, modes) != expected:
+        raise ValueError(f'{base}: staged files differ from imported AUR snapshot')
+
+
 def ensure_pr(repo, branch, base, commit, existing):
     body = (f'Review all recipe and supporting-file changes before merging.\n\n'
             f'Upstream: https://aur.archlinux.org/cgit/aur.git/commit/?h={base}&id={commit}\n\n'
@@ -169,10 +194,15 @@ def main():
             remote = f'https://github.com/{repo}.git'
             lease, up_to_date = proposal_state(checkout, remote, branch, base, commit, existing)
             if up_to_date:
-                if not existing:
-                    ensure_pr(repo, branch, base, commit, existing)
-                print(f'{base}: AUR revision already proposed; preserving branch')
-                continue
+                if proposal_complete(checkout, base):
+                    if not existing:
+                        ensure_pr(repo, branch, base, commit, existing)
+                    print(f'{base}: AUR revision already proposed; preserving branch')
+                    continue
+                # Preserve the existing bot commit and append a repair for an
+                # incomplete import, even though its AUR revision is unchanged.
+                run('git', 'reset', '--hard', lease, cwd=checkout)
+                print(f'{base}: repairing incomplete AUR import with an additional commit')
             target = checkout / 'packages' / 'aur' / base
             import shutil
             if target.exists():
@@ -184,7 +214,7 @@ def main():
             state_path.write_text(json.dumps({'commit': commit, 'digest': digest(tree(target))}, indent=2, sort_keys=True) + '\n')
             run('git', 'config', 'user.name', 'github-actions[bot]', cwd=checkout)
             run('git', 'config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com', cwd=checkout)
-            run('git', 'add', f'packages/aur/{base}', lock_path(base), cwd=checkout)
+            stage_snapshot(checkout, base)
             run('git', 'commit', '-qm', f'aur-bot: {base} {commit}', cwd=checkout)
             run('git', 'remote', 'set-url', 'origin', f'https://github.com/{repo}.git', cwd=checkout)
             run('git', 'push', f'--force-with-lease=refs/heads/{branch}:{lease}', 'origin', branch, cwd=checkout)
