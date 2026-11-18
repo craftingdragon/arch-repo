@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import vcs
+import reuse
 
 spec = importlib.util.spec_from_file_location('updater', Path(__file__).with_name('update-aur.py'))
 updater = importlib.util.module_from_spec(spec)
@@ -28,4 +30,6 @@ for recipe in Path('packages').glob('*/*/PKGBUILD'):
         info = recipe.with_name('.SRCINFO')
         if not info.exists() or f'pkgbase = {base}' not in info.read_text().splitlines():
             raise SystemExit(f'{base}: missing or inconsistent .SRCINFO')
+        if base.endswith('-git') and 'vcs_sources' in state:
+            vcs.validate(reuse.metadata(info.read_text()), state['vcs_sources'])
 print('Static package configuration checks passed')
