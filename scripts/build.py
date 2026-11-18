@@ -4,8 +4,10 @@ import json
 import hashlib
 import os
 import shutil
+import shlex
 import tempfile
 import reuse
+import vcs
 from pathlib import Path
 import subprocess
 
@@ -18,7 +20,7 @@ def docker(recipe, script, extra=()):
     if jobs < 1:
         raise ValueError('Runner nproc must be positive')
     subprocess.run(['docker', 'run', '--rm', '--env', f'RUNNER_NPROC={jobs}', '-v', f'{recipe}:/recipe:ro',
-                    '-v', f'{OUT}:/out', 'archlinux:base', 'bash', '-euc', script, '--', *extra], check=True)
+                    '-v', f'{OUT}:/out', '-v', f'{Path(vcs.__file__).resolve()}:/vcs.py:ro', 'archlinux:base', 'bash', '-euc', script, '--', *extra], check=True)
 
 
 BOOT = '''
@@ -36,7 +38,7 @@ def main():
         raise SystemExit('out/ must be empty before building')
     recipes = sorted(ROOT.glob('packages/*/*/PKGBUILD'))
     records = {}
-    implementation = hashlib.sha256(Path(__file__).read_bytes() + Path(reuse.__file__).read_bytes()).hexdigest()
+    implementation = hashlib.sha256(Path(__file__).read_bytes() + Path(reuse.__file__).read_bytes() + Path(vcs.__file__).read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory() as tmp:
         meta = Path(tmp)
         if recipes:
@@ -55,6 +57,14 @@ done
             base = str(recipe.parent.relative_to(ROOT))
             records[base] = {'fingerprint': reuse.fingerprint(recipe.parent, implementation),
                              'metadata': reuse.metadata((meta / str(i)).read_text()), 'outputs': []}
+    for base, record in records.items():
+        path = Path(base)
+        if path.parent == Path('packages/aur') and path.name.endswith('-git'):
+            state = json.loads((ROOT / '.aur-locks' / (path.name + '.json')).read_text())
+            locked = state.get('vcs_sources', {})
+            vcs.validate(record['metadata'], locked)
+            record['vcs_sources'] = locked
+            record['fingerprint'] = hashlib.sha256(json.dumps([record['fingerprint'], locked], sort_keys=True).encode()).hexdigest()
     for base, edges in reuse.graph(records).items():
         records[base]['dependencies'] = edges
     url = os.environ.get('PAGES_URL', '')
@@ -86,7 +96,12 @@ done
         for recipe in pending[:]:
             before = set(OUT.glob('*.pkg.tar.zst'))
             try:
-                docker(recipe.parent, BOOT + r'''
+                record = records[str(recipe.parent.relative_to(ROOT))]
+                pin = ''
+                if 'vcs_sources' in record:
+                    pin = ('python /vcs.py ' + shlex.quote(json.dumps(record['metadata'])) + ' '
+                           + shlex.quote(json.dumps(record['vcs_sources'])) + ' >> PKGBUILD\n')
+                docker(recipe.parent, BOOT + pin + r'''
 printf '\nMAKEFLAGS="-j%s"\n' "$RUNNER_NPROC" >> /etc/makepkg.conf
 runuser -u builder -- makepkg --printsrcinfo > /tmp/srcinfo
 python - <<'PY'
