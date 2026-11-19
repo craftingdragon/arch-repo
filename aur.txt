@@ -24,3 +24,17 @@ ungoogled-chromium-bin
 vesktop-electron-git
 wordcraft
 zen-browser-bin
+
+# Installed tools: curated package expansion, batch 1.
+apkeep
+qdirstat
+dmg2img
+ventoy-bin
+
+# Database and API development tools, batch 2.
+mongodb-tools-bin
+mongosh-bin
+insomnia-bin
+
+# Stable OneDrive alternative, batch 3.
+onedrive-abraunegg
