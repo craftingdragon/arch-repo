@@ -50,6 +50,13 @@ def main():
         target = r2 / key
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(source, target)
+    # libalpm appends .sig to the package's final effective URL after redirects.
+    # Keep the content-addressed signature URL for direct links, and also expose
+    # a valid signature beside the package for pacman's automatic fetch.
+    for i in range(0, len(files), 2):
+        package = r2 / files[i][1]
+        signature = r2 / files[i + 1][1]
+        shutil.copyfile(signature, package.with_name(package.name + '.sig'))
     r2.mkdir(exist_ok=True)
     (site / '_redirects').write_text('\n'.join(redirects) + ('\n' if redirects else ''))
     # Mutable databases stay on Pages and must not be cached across deployments.

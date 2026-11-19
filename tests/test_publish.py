@@ -60,6 +60,8 @@ class PublishTests(unittest.TestCase):
             run('python', 'scripts/prepare-cloudflare.py')
             self.assertFalse((site / archive.name).exists())
             self.assertEqual((root / 'r2/sha256' / reuse.sha(archive) / archive.name).read_bytes(), archive.read_bytes())
+            adjacent_signature = root / 'r2/sha256' / reuse.sha(archive) / (archive.name + '.sig')
+            run('gpg', '--verify', str(adjacent_signature), str(archive))
             self.assertEqual(reuse.restore((root / 'site').as_uri(), root / 'signing-fingerprint.txt', root / 'out'), {'smoke': record})
             (root / 'signing-fingerprint.txt').write_text('INVALID')
             with self.assertRaises(subprocess.CalledProcessError):

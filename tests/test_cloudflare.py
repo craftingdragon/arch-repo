@@ -45,6 +45,10 @@ class CloudflareTests(unittest.TestCase):
         self.assertEqual((Path('r2/sha256') / self.digest / self.name).read_bytes(), b'package')
         signature_hash = hashlib.sha256(b'signature').hexdigest()
         self.assertEqual((Path('r2/sha256') / signature_hash / (self.name + '.sig')).read_bytes(), b'signature')
+        # Pacman uses the final package URL + '.sig', rather than the catalog's
+        # independent signature redirect. Both paths must return the signature.
+        package = Path('r2/sha256') / self.digest / self.name
+        self.assertEqual(Path(str(package) + '.sig').read_bytes(), b'signature')
         redirects = Path('site/_redirects').read_text().splitlines()
         self.assertEqual(len(redirects), 4)
         self.assertIn(f'/x86_64/{self.name} https://packages.example.invalid/sha256/{self.digest}/example-1%3A2.0-1-x86_64.pkg.tar.zst 301', redirects)
