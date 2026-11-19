@@ -27,10 +27,14 @@ jobs:
         env:
           PAGES_URL: ${{ steps.pages.outputs.base_url }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+      # Package filenames may contain epochs (:) that upload-artifact rejects.
+      - name: Pack build outputs for transfer
+        run: tar -cf packages.tar -C out .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: packages
-          path: out/
+          path: packages.tar
+          compression-level: 0
           if-no-files-found: error
   sign:
     needs: build
@@ -45,7 +49,11 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: packages
-          path: out
+          path: artifacts
+      - name: Unpack build outputs
+        run: |
+          mkdir -p out
+          tar -xf artifacts/packages.tar -C out
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
         id: pages
       - run: bash scripts/publish.sh
