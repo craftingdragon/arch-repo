@@ -118,6 +118,7 @@ class UpdaterRoundTripTests(unittest.TestCase):
             original_run = updater.run
             pr_open = False
             pr_creations = []
+            pr_edits = []
             def run(*args, cwd=None):
                 nonlocal pr_open
                 if args[0] == 'gh':
@@ -128,6 +129,9 @@ class UpdaterRoundTripTests(unittest.TestCase):
                         pr_open = True
                         pr_creations.append(args)
                         return 'PR created'
+                    if args[1:3] == ('pr', 'edit'):
+                        pr_edits.append(args)
+                        return 'PR updated'
                     raise AssertionError(args)
                 rewritten = [str(aur) if arg == 'https://aur.archlinux.org/example-git.git'
                              else str(remote) if arg == 'https://github.com/test/repo.git' else arg for arg in args]
@@ -149,6 +153,7 @@ class UpdaterRoundTripTests(unittest.TestCase):
                     head = original_run('git', '--git-dir', str(remote), 'rev-parse', 'refs/heads/aur-update/example-git')
                     updater.main()
                     self.assertEqual(len(pr_creations), 2)
+                    self.assertEqual(len(pr_edits), 1)
                     self.assertEqual(original_run('git', '--git-dir', str(remote), 'rev-parse', 'refs/heads/aur-update/example-git'), head)
                     checkout = root / 'fresh'
                     subprocess.run(['git', 'clone', '-q', '--branch', 'aur-update/example-git', str(remote), str(checkout)], check=True)

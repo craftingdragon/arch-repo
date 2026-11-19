@@ -1,0 +1,7 @@
+{
+  "github.com": "github",
+  "gitlab.com": "gitlab",
+  "codeberg.org": "forgejo",
+  "gitea.com": "gitea",
+  "code.forgejo.org": "forgejo"
+}

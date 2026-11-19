@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
+from urllib.parse import urlsplit
 
 
 def run(*args, cwd=None):
@@ -162,13 +163,46 @@ def stage_snapshot(checkout, base):
         raise ValueError(f'{base}: staged files differ from imported AUR snapshot')
 
 
-def ensure_pr(repo, branch, base, commit, existing, vcs_sources=None):
+def upstream_compare(source, old, new):
+    if (old == new or not all(isinstance(sha, str) and re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', sha)
+                             for sha in (old, new))):
+        return None
+    url = source.split('::', 1)[-1].removeprefix('git+').replace('?signed', '').split('#', 1)[0]
+    # Normalize SCP-style clone URLs without confusing an SSH port with a path.
+    if re.match(r'^[^/@:]+@[^/:]+:', url):
+        url = 'ssh://' + url.replace(':', '/', 1)
+    parsed = urlsplit(url)
+    if parsed.scheme not in ('https', 'http', 'git', 'ssh') or not parsed.hostname:
+        return None
+    hosts = json.loads(Path(__file__).resolve().parent.parent.joinpath('forge-hosts.json').read_text())
+    forge = hosts.get(parsed.hostname.lower())
+    path = parsed.path.rstrip('/').removesuffix('.git').strip('/')
+    if parsed.query or not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)+', path):
+        return None
+    if any(part in ('.', '..') for part in path.split('/')):
+        return None
+    base = f'https://{parsed.hostname.lower()}/{path}'
+    if forge == 'github':
+        return f'{base}/compare/{old}..{new}'
+    if forge == 'gitlab':
+        return f'{base}/-/compare/{old}...{new}?straight=true'
+    if forge in ('gitea', 'forgejo'):
+        return f'{base}/compare/{old}...{new}'
+    return None
+
+
+def ensure_pr(repo, branch, base, commit, existing, vcs_sources=None, previous_vcs_sources=None):
     body = (f'Review all recipe and supporting-file changes before merging.\n\n'
             f'Upstream: https://aur.archlinux.org/cgit/aur.git/commit/?h={base}&id={commit}\n\n'
             'No recipe code was executed by the updater.')
     if vcs_sources:
-        body += '\n\nProposed upstream Git revisions:\n' + '\n'.join(
-            f'- `{source}` → `{sha}`' for source, sha in sorted(vcs_sources.items()))
+        body += '\n\nProposed upstream Git revisions:'
+        for source, sha in sorted(vcs_sources.items()):
+            old = (previous_vcs_sources or {}).get(source)
+            compare = upstream_compare(source, old, sha)
+            body += f'\n- `{source}` → `{sha}`'
+            if compare:
+                body += f' ([Compare {old[:12]}..{sha[:12]}]({compare}))'
     if existing:
         run('gh', 'pr', 'edit', str(existing[0]['number']), '--repo', repo, '--body', body)
     else:
@@ -208,8 +242,8 @@ def main():
             lease, up_to_date = proposal_state(checkout, remote, branch, base, commit, existing, vcs_sources)
             if up_to_date:
                 if proposal_complete(checkout, base):
-                    if not existing:
-                        ensure_pr(repo, branch, base, commit, existing, vcs_sources)
+                    ensure_pr(repo, branch, base, commit, existing, vcs_sources,
+                              previous.get('vcs_sources', {}) if previous else {})
                     print(f'{base}: AUR revision already proposed; preserving branch')
                     continue
                 # Preserve the existing bot commit and append a repair for an
@@ -234,7 +268,8 @@ def main():
             run('git', 'commit', '-qm', f'aur-bot: {base} {commit}', cwd=checkout)
             run('git', 'remote', 'set-url', 'origin', f'https://github.com/{repo}.git', cwd=checkout)
             run('git', 'push', f'--force-with-lease=refs/heads/{branch}:{lease}', 'origin', branch, cwd=checkout)
-            ensure_pr(repo, branch, base, commit, existing, vcs_sources)
+            ensure_pr(repo, branch, base, commit, existing, vcs_sources,
+                      previous.get('vcs_sources', {}) if previous else {})
 
 
 if __name__ == '__main__':

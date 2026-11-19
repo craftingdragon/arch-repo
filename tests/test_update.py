@@ -95,6 +95,46 @@ class ProposalRecoveryTests(unittest.TestCase):
             updater.ensure_pr('owner/repo', 'aur-update/example', 'example', 'upstream1', [{'number': 42}])
         self.assertEqual(call.call_args.args[:4], ('gh', 'pr', 'edit', '42'))
 
+    def test_upstream_git_compare_links_in_pr_body(self):
+        from unittest.mock import patch
+        old, new = 'a' * 40, 'b' * 40
+        source = 'checkout::git+https://github.com/OWNER/REPO.git?signed#branch=main'
+        for existing in ([], [{'number': 42}]):
+            with self.subTest(existing=existing), patch.object(updater, 'run') as call:
+                updater.ensure_pr('owner/repo', 'branch', 'example-git', 'recipe', existing,
+                                  {source: new}, {source: old})
+                args = call.call_args.args
+                body = args[args.index('--body') + 1]
+                self.assertIn(f'https://github.com/OWNER/REPO/compare/{old}..{new}', body)
+        for url in ('git+https://github.com/OWNER/REPO', 'git+git://github.com/OWNER/REPO.git',
+                    'git+ssh://git@github.com/OWNER/REPO.git', 'git+git@github.com:OWNER/REPO.git'):
+            self.assertEqual(updater.upstream_compare(url, old, new),
+                             f'https://github.com/OWNER/REPO/compare/{old}..{new}')
+        self.assertIsNone(updater.upstream_compare(source, None, new))
+        self.assertIsNone(updater.upstream_compare(source, new, new))
+        self.assertIsNone(updater.upstream_compare('git+https://example.com/OWNER/REPO', old, new))
+
+    def test_compare_links_for_other_forges(self):
+        old, new = 'a' * 40, 'b' * 40
+        for source, expected in [
+            ('alias::git+https://gitlab.com/group/subgroup/repo.git#branch=main',
+             f'https://gitlab.com/group/subgroup/repo/-/compare/{old}...{new}?straight=true'),
+            ('git+ssh://git@gitlab.com/group/repo.git',
+             f'https://gitlab.com/group/repo/-/compare/{old}...{new}?straight=true'),
+            ('git+https://codeberg.org/owner/repo.git',
+             f'https://codeberg.org/owner/repo/compare/{old}...{new}'),
+            ('git+git@gitea.com:owner/repo.git',
+             f'https://gitea.com/owner/repo/compare/{old}...{new}'),
+            ('git+ssh://git@code.forgejo.org:2222/owner/repo.git',
+             f'https://code.forgejo.org/owner/repo/compare/{old}...{new}'),
+        ]:
+            with self.subTest(source=source):
+                self.assertEqual(updater.upstream_compare(source, old, new), expected)
+        from unittest.mock import patch
+        with patch.object(updater.json, 'loads', return_value={'git.example.org': 'gitlab'}):
+            self.assertEqual(updater.upstream_compare('git+https://git.example.org/group/subgroup/repo.git', old, new),
+                             f'https://git.example.org/group/subgroup/repo/-/compare/{old}...{new}?straight=true')
+
     def test_master_advance_preserves_same_upstream_proposal(self):
         head = self.proposal()
         self.git('checkout', '-q', 'master')
