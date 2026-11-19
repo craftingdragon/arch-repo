@@ -38,7 +38,9 @@ def main():
         raise SystemExit('out/ must be empty before building')
     recipes = sorted(ROOT.glob('packages/*/*/PKGBUILD'))
     records = {}
-    implementation = hashlib.sha256(Path(__file__).read_bytes() + Path(reuse.__file__).read_bytes() + Path(vcs.__file__).read_bytes()).hexdigest()
+    # Explicit build ABI: transport/publication fixes must not invalidate binaries.
+    # Initially seeded with the implementation hash of the successful R2 build.
+    implementation = Path(__file__).with_name('build-cache-version.txt').read_text().strip()
     with tempfile.TemporaryDirectory() as tmp:
         meta = Path(tmp)
         if recipes:
@@ -69,7 +71,7 @@ done
         records[base]['dependencies'] = edges
     url = os.environ.get('PAGES_URL', '')
     forced = os.environ.get('FORCE_REBUILD', 'false').lower() == 'true'
-    previous = {} if forced else reuse.restore(url, ROOT / 'signing-fingerprint.txt', OUT)
+    previous = {} if forced else reuse.restore(url, ROOT / 'signing-fingerprint.txt', OUT, strict=True)
     dirty = {base: 'forced rebuild' if forced else 'recipe or build inputs changed'
              for base, record in records.items()
              if forced or previous.get(base, {}).get('fingerprint') != record['fingerprint']

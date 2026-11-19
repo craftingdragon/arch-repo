@@ -60,6 +60,8 @@ class ReuseTests(unittest.TestCase):
         self.assertEqual(reuse.restore('', Path('unused'), Path('unused')), {})
         with patch.object(reuse, 'fetch', side_effect=OSError('unreachable')):
             self.assertEqual(reuse.restore('https://example.invalid', Path('unused'), Path('unused')), {})
+            with self.assertRaisesRegex(RuntimeError, 'refusing automatic full rebuild'):
+                reuse.restore('https://example.invalid', Path('unused'), Path('unused'), strict=True)
 
     def test_unchanged_run_does_not_compile_and_force_does(self):
         import os
@@ -73,7 +75,7 @@ class ReuseTests(unittest.TestCase):
             recipe.mkdir(parents=True)
             (recipe / 'PKGBUILD').write_text('pkgname=example')
             out = root / 'out'
-            implementation = hashlib.sha256(Path(build.__file__).read_bytes() + Path(build.reuse.__file__).read_bytes() + Path(build.vcs.__file__).read_bytes()).hexdigest()
+            implementation = Path(build.__file__).with_name('build-cache-version.txt').read_text().strip()
             info = 'pkgname = example\npkgver = 1\npkgrel = 1\narch = any\n'
             record = {'fingerprint': reuse.fingerprint(recipe, implementation), 'metadata': reuse.metadata(info),
                       'dependencies': [], 'outputs': [{'filename': 'example.pkg.tar.zst', 'sha256': '0' * 64}]}

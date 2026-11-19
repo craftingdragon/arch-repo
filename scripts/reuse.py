@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import tempfile
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 from urllib.parse import quote
 
 
@@ -78,12 +78,13 @@ def invalidate(records, previous, dirty):
 
 
 def fetch(url, path):
-    with urlopen(url, timeout=30) as response, path.open('wb') as output:
+    request = Request(url, headers={'User-Agent': 'crafting-repo/1.0 (+https://github.com/craftingdragon/arch-repo)'})
+    with urlopen(request, timeout=30) as response, path.open('wb') as output:
         import shutil
         shutil.copyfileobj(response, output)
 
 
-def restore(url, fingerprint_path, staging):
+def restore(url, fingerprint_path, staging, *, strict=False):
     if not url:
         return {}
     try:
@@ -115,6 +116,9 @@ def restore(url, fingerprint_path, staging):
                         raise ValueError('Invalid output hash')
             return records
     except (OSError, HTTPException, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+        if strict:
+            raise RuntimeError(f'Cannot verify published snapshot; refusing automatic full rebuild: {error}. '
+                               'Fix access or explicitly select force_rebuild.') from error
         print(f'Published snapshot unavailable or untrusted; full rebuild: {error}')
         return {}
 
