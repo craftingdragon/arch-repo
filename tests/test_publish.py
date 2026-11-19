@@ -29,14 +29,14 @@ class PublishTests(unittest.TestCase):
             run('bash', 'scripts/publish.sh')
             self.assertIn('No packages yet', (root / 'site/index.html').read_text())
             info = root / '.PKGINFO'
-            info.write_text('pkgname = smoke\npkgbase = smoke\npkgver = 1.0-1\npkgdesc = Smoke package\nurl = https://example.invalid\nbuilddate = 1\npackager = Test\nsize = 0\narch = any\nlicense = MIT\n')
-            run('bsdtar', '--zstd', '-cf', 'out/smoke-1.0-1-any.pkg.tar.zst', '.PKGINFO')
+            info.write_text('pkgname = smoke\npkgbase = smoke\npkgver = 1:1.0-1\npkgdesc = Smoke package\nurl = https://example.invalid\nbuilddate = 1\npackager = Test\nsize = 0\narch = any\nlicense = MIT\n')
+            run('bsdtar', '--zstd', '-cf', 'out/smoke-1:1.0-1-any.pkg.tar.zst', '.PKGINFO')
             import sys
             sys.path.insert(0, str(Path('scripts').resolve()))
             import reuse
-            archive = root / 'out/smoke-1.0-1-any.pkg.tar.zst'
+            archive = root / 'out/smoke-1:1.0-1-any.pkg.tar.zst'
             record = {'fingerprint': 'test', 'dependencies': [], 'outputs': [
-                {'filename': archive.name, 'sha256': reuse.sha(archive), 'name': 'smoke', 'version': '1.0-1', 'architecture': 'any'}]}
+                {'filename': archive.name, 'sha256': reuse.sha(archive), 'name': 'smoke', 'version': '1:1.0-1', 'architecture': 'any'}]}
             (root / 'out/build-manifest.json').write_text(json.dumps({'schema': 1, 'architecture': 'x86_64', 'recipes': {'smoke': record}}))
             run('bash', 'scripts/publish.sh')
             restored = reuse.restore((root / 'site').as_uri(), root / 'signing-fingerprint.txt', root / 'out')
@@ -50,12 +50,17 @@ class PublishTests(unittest.TestCase):
             manifest.write_bytes(original)
             site = root / 'site/x86_64'
             self.assertFalse(any(p.is_symlink() for p in site.iterdir()))
-            for name in ['testrepo.db', 'testrepo.files', 'smoke-1.0-1-any.pkg.tar.zst']:
+            for name in ['testrepo.db', 'testrepo.files', 'smoke-1:1.0-1-any.pkg.tar.zst']:
                 run('gpg', '--verify', str(site / (name + '.sig')), str(site / name))
             run('gpg', '--verify', str(root / 'site/build-manifest.json.sig'), str(root / 'site/build-manifest.json'))
-            self.assertIn('smoke-1.0', (root / 'site/packages.html').read_text())
+            self.assertIn('smoke-1%3A1.0', (root / 'site/packages.html').read_text())
             self.assertIn('SigLevel = Required DatabaseRequired', (root / 'site/index.html').read_text())
-            self.assertIn('smoke-1.0-1/desc', run('bsdtar', '-tf', str(site / 'testrepo.db')).decode())
+            self.assertIn('smoke-1:1.0-1/desc', run('bsdtar', '-tf', str(site / 'testrepo.db')).decode())
+            env['R2_PUBLIC_URL'] = 'https://packages.example.invalid'
+            run('python', 'scripts/prepare-cloudflare.py')
+            self.assertFalse((site / archive.name).exists())
+            self.assertEqual((root / 'r2/sha256' / reuse.sha(archive) / archive.name).read_bytes(), archive.read_bytes())
+            self.assertEqual(reuse.restore((root / 'site').as_uri(), root / 'signing-fingerprint.txt', root / 'out'), {'smoke': record})
             (root / 'signing-fingerprint.txt').write_text('INVALID')
             with self.assertRaises(subprocess.CalledProcessError):
                 run('bash', 'scripts/publish.sh')

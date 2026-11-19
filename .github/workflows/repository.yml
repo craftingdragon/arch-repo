@@ -21,11 +21,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-        id: pages
       - run: python scripts/build.py
         env:
-          PAGES_URL: ${{ steps.pages.outputs.base_url }}
+          PAGES_URL: https://arch.craftingdragon.ch
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
       # Package filenames may contain epochs (:) that upload-artifact rejects.
       - name: Pack build outputs for transfer
@@ -54,25 +52,62 @@ jobs:
         run: |
           mkdir -p out
           tar -xf artifacts/packages.tar -C out
-      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
-        id: pages
       - run: bash scripts/publish.sh
         env:
           SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
           SIGNING_PASSPHRASE: ${{ secrets.REPO_SIGNING_PASSPHRASE }}
-          PAGES_URL: ${{ steps.pages.outputs.base_url }}
-      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+          PAGES_URL: https://arch.craftingdragon.ch
+      - name: Prepare R2 objects and Pages redirects
+        run: python scripts/prepare-cloudflare.py
+        env:
+          R2_PUBLIC_URL: https://packages.craftingdragon.ch
+      - name: Pack signed publication
+        run: tar -cf publication.tar site r2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          path: site
+          name: publication
+          path: publication.tar
+          compression-level: 0
+          if-no-files-found: error
   deploy:
     needs: sign
     runs-on: ubuntu-latest
     permissions:
-      pages: write
-      id-token: write
+      contents: read
     environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      name: cloudflare
+      url: https://arch.craftingdragon.ch
     steps:
-      - uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
-        id: deployment
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: publication
+          path: artifacts
+      - run: tar -xf artifacts/publication.tar
+      - name: Install deployment clients
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y awscli
+          npm ci
+      # Upload immutable objects first. Failed uploads never advance Pages.
+      # Keep old objects so cached 301s and earlier deployments still work.
+      - name: Upload packages and signatures to R2
+        run: |
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$R2_BUCKET"
+          aws s3 sync r2/ "s3://$R2_BUCKET/" \
+            --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --cache-control 'public,max-age=31536000,immutable' --no-progress
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+      - name: Deploy website and repository databases
+        run: npx --no-install wrangler pages deploy site --project-name=crafting-repo --branch=master
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

@@ -38,4 +38,3 @@ sign site/build-manifest.json
 export REPO_NAME="$name" REPO_FINGERPRINT="$fingerprint"
 python scripts/site.py
 [[ -z $(find site -type l -print -quit) ]]
-[[ $(du -sb site | cut -f1) -lt 1000000000 ]] || { echo 'Pages site exceeds 1 GB'; exit 1; }

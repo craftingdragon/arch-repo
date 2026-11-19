@@ -108,7 +108,7 @@ def restore(url, fingerprint_path, staging):
                     raise ValueError('Incomplete outputs')
                 for output in record['outputs']:
                     name = output['filename']
-                    if not re.fullmatch(r'[A-Za-z0-9@._+\-]+\.pkg\.tar\.zst', name) or name in filenames:
+                    if not re.fullmatch(r'[A-Za-z0-9@._+:\-]+\.pkg\.tar\.zst', name) or name in filenames:
                         raise ValueError('Unsafe or duplicate output filename')
                     filenames.add(name)
                     if not re.fullmatch('[0-9a-f]{64}', output['sha256']):
