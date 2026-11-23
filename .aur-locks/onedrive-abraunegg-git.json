@@ -2,6 +2,6 @@
   "commit": "f8c3fb86b7bd0241c47f3be26d1d801419cb9e33",
   "digest": "d58eafde942d7521a29e379b808781016d17dcdc60a502f4d186d81dbe537385",
   "vcs_sources": {
-    "git+https://github.com/abraunegg/onedrive.git": "ee04a86aec5bb642df3c0c4980179cbac998b7bd"
+    "git+https://github.com/abraunegg/onedrive.git": "86cfb79435a249476f918e5bd6f7c8ff4f0e24e6"
   }
 }
