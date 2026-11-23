@@ -1,4 +1,6 @@
 import importlib.util
+import hashlib
+import io
 from pathlib import Path
 import tempfile
 import unittest
@@ -62,6 +64,27 @@ class ReuseTests(unittest.TestCase):
             self.assertEqual(reuse.restore('https://example.invalid', Path('unused'), Path('unused')), {})
             with self.assertRaisesRegex(RuntimeError, 'refusing automatic full rebuild'):
                 reuse.restore('https://example.invalid', Path('unused'), Path('unused'), strict=True)
+
+    def test_epoch_download_avoids_pages_html_fallback(self):
+        archives = {
+            'insomnia-bin-1:13.4.0-1-x86_64.pkg.tar.zst': b'package archive',
+            'insomnia-bin-debug-1:13.4.0-1-x86_64.pkg.tar.zst': b'debug archive',
+        }
+        prefix = 'https://example.invalid/x86_64/'
+
+        def serve(request, **kwargs):
+            # Pages serves its HTML fallback for encoded epoch paths with 200,
+            # while literal-colon paths redirect to the actual package archives.
+            name = request.full_url.removeprefix(prefix)
+            return io.BytesIO(archives.get(name, b'<!doctype html><title>Overview</title>'))
+
+        record = {'outputs': [{'filename': name, 'sha256': hashlib.sha256(data).hexdigest()}
+                              for name, data in archives.items()]}
+        with tempfile.TemporaryDirectory() as tmp, patch.object(reuse, 'urlopen', side_effect=serve):
+            stage = Path(tmp)
+            self.assertTrue(reuse.download(record, 'https://example.invalid', stage))
+            for name, data in archives.items():
+                self.assertEqual((stage / name).read_bytes(), data)
 
     def test_unchanged_run_does_not_compile_and_force_does(self):
         import os

@@ -72,3 +72,19 @@ class SiteTests(unittest.TestCase):
         site.main()
         for page in ('index.html', 'packages.html'):
             self.assertIn('No packages yet', (self.target / page).read_text())
+
+    def test_epoch_download_and_signature_links_use_literal_colons(self):
+        path = self.target / 'build-manifest.json'
+        manifest = json.loads(path.read_text())
+        output = manifest['recipes']['packages/aur/example']['outputs'][0]
+        old = output['filename']
+        name = 'example-1:1.2.3-1-any.pkg.tar.zst'
+        for suffix in ('', '.sig'):
+            (self.target / 'x86_64' / (old + suffix)).rename(self.target / 'x86_64' / (name + suffix))
+        output.update(filename=name, version='1:1.2.3-1')
+        path.write_text(json.dumps(manifest))
+        site.main()
+        catalog = (self.target / 'packages.html').read_text()
+        self.assertIn(f'href="x86_64/{name}"', catalog)
+        self.assertIn(f'href="x86_64/{name}.sig"', catalog)
+        self.assertNotIn('%3A', catalog)

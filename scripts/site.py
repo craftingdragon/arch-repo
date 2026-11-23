@@ -106,7 +106,8 @@ def main():
 <form id="catalog-controls" class="controls" hidden><label>Search packages<input type="search" id="search" placeholder="Name or description…"></label><label>Sort by<select id="sort"><option value="name">Name: A–Z</option><option value="size">Size: smallest first</option><option value="size-desc">Size: largest first</option></select></label><label class="checkbox"><input type="checkbox" id="show-debug"> Show debug packages</label></form>'''
     catalog += f'<p id="package-count" role="status">{len(rows)} packages</p><div class="table-wrap"><table><caption class="sr-only">Available packages</caption><thead><tr><th scope="col">Package</th><th scope="col">Version</th><th scope="col">Architecture</th><th scope="col">Size</th><th scope="col">Actions</th></tr></thead><tbody id="packages">'
     for row in rows:
-        href = 'x86_64/' + quote(row['filename'], safe='')
+        # Keep epoch colons literal so Pages resolves the package redirect.
+        href = 'x86_64/' + quote(row['filename'], safe=':')
         source_link = f'<a href="{esc(row["source"])}">PKGBUILD</a>' if row['source'] else '<span class="muted">Source unavailable</span>'
         signature = f'<a href="{esc(href)}.sig">Signature</a>' if (site / 'x86_64' / (row['filename'] + '.sig')).exists() else '<span class="muted">Signature unavailable</span>'
         catalog += f'''<tr data-name="{esc(row['name'])}" data-search="{esc(row['name'] + ' ' + row['description'])}" data-size="{row['size']}" data-debug="{str(row['debug']).lower()}"><th scope="row"><span class="package-name">{esc(row['name'])}</span>{'<span class="badge">debug</span>' if row['debug'] else ''}<p class="description">{esc(row['description'])}</p></th><td class="version">{esc(row['version'])}</td><td><code>{esc(row['architecture'])}</code></td><td class="size">{size_label(row['size'])}</td><td><div class="row-actions"><a href="{esc(href)}" aria-label="Download {esc(row['name'])}">Download</a>{signature}{source_link}</div></td></tr>'''
@@ -116,7 +117,7 @@ def main():
     catalog += '<details class="panel files"><summary>Repository files</summary><p>Pacman databases, detached signatures, and build manifests.</p><ul>'
     for file in sorted((site / 'x86_64').iterdir()):
         if '.pkg.tar.' not in file.name:
-            catalog += f'<li><a href="x86_64/{quote(file.name, safe="")}">{esc(file.name)}</a></li>'
+            catalog += f'<li><a href="x86_64/{quote(file.name, safe=":")}">{esc(file.name)}</a></li>'
     for filename in ('build-manifest.json', 'build-manifest.json.sig', 'repo-key.asc'):
         if (site / filename).exists():
             catalog += f'<li><a href="{filename}">{filename}</a></li>'

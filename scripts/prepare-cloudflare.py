@@ -40,7 +40,7 @@ def main():
             files.append((source, key))
     redirects = []
     for source, key in files:
-        # Browsers/catalog links encode epochs; pacman may send a literal colon.
+        # Retain both forms; generated clients use literal epoch colons for Pages.
         for name in dict.fromkeys((quote(source.name, safe=''), source.name)):
             redirects.append(f'/x86_64/{name} {url}/{quote(key, safe="/")} 301')
     # Cloudflare limits static redirects to 2000. Reject before moving files.

@@ -129,7 +129,8 @@ def download(record, url, staging):
         for output in record['outputs']:
             path = staging / output['filename']
             downloaded.append(path)
-            fetch(url.rstrip('/') + '/x86_64/' + quote(path.name), path)
+            # Pages routes literal epoch colons; encoded ones hit its HTML fallback.
+            fetch(url.rstrip('/') + '/x86_64/' + quote(path.name, safe=':'), path)
             if sha(path) != output['sha256']:
                 raise ValueError(f'Checksum mismatch: {path.name}')
         return True
