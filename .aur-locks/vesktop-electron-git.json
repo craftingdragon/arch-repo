@@ -2,6 +2,6 @@
   "commit": "7f00ca565600d8da8bb01ba39bdab9bfdfb5ca84",
   "digest": "67384134b4041fbaf97eb0b08851b4c754b3779e05cb433edd998f420ebbaaec",
   "vcs_sources": {
-    "vesktop::git+https://github.com/Vencord/Vesktop.git": "dd8317808a94d66cf85d9aebf748339154dd9cb7"
+    "vesktop::git+https://github.com/Vencord/Vesktop.git": "d5669a024c557b976930c5a90991218b9136e2eb"
   }
 }
