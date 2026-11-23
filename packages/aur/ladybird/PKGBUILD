@@ -42,6 +42,9 @@ prepare() {
   patch ladybird/UI/Qt/CMakeLists.txt < hb-fc-whole-archive.patch
   patch ladybird/Meta/CMake/compile_options.cmake < gcc-build.patch
 
+  # Allow warnings introduced by newer Arch Rust releases.
+  sed -i 's/-Dwarnings //g' ladybird/Meta/CMake/rust_crate.cmake
+
   "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
 
   cmake \
