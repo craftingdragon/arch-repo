@@ -1,0 +1,10 @@
+diff --git a/Meta/CMake/sync_rust_ffi_header.cmake b/Meta/CMake/sync_rust_ffi_header.cmake
+--- a/Meta/CMake/sync_rust_ffi_header.cmake
++++ b/Meta/CMake/sync_rust_ffi_header.cmake
+@@ -15 +15,5 @@
+-file(GLOB root_output_files "${CARGO_BUILD_SCRIPT_DIR}/${CRATE_NAME}-*/root-output")
++# Cargo 1.100 moved build-script run metadata into a crate/hash/run directory.
++file(GLOB root_output_files
++    "${CARGO_BUILD_SCRIPT_DIR}/${CRATE_NAME}-*/root-output"
++    "${CARGO_BUILD_SCRIPT_DIR}/${CRATE_NAME}/*/run/root-output"
++)

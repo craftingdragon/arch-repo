@@ -19,12 +19,14 @@ source=(
   "git+https://github.com/microsoft/vcpkg.git#commit=8f363bdc11359ede4bc51e5eb32a2617538049c8" # vcpkg.json:builtin-baseline
   "hb-fc-whole-archive.patch"
   "gcc-build.patch"
+  "cargo-build-layout.patch"
 )
 sha256sums=(
   'SKIP'
   'SKIP'
   'e268aed76a27dc8519be00f6c30a59ce2339683127839f8e097d14d92d7b4268'
   '4065634ed192973510df368f9148a19fbf4f2ebd1d7681c53163fa6f70f0412d'
+  '497a25ffeab09d7b4d19210bde0659b7310bb8312e2e4ce1cc248d4d5a0ad2da'
 )
 
 prepare() {
@@ -41,6 +43,7 @@ prepare() {
 
   patch ladybird/UI/Qt/CMakeLists.txt < hb-fc-whole-archive.patch
   patch ladybird/Meta/CMake/compile_options.cmake < gcc-build.patch
+  patch -d ladybird -Np1 -i "${srcdir}/cargo-build-layout.patch" || return 1
 
   # Allow warnings introduced by newer Arch Rust releases.
   sed -i 's/-Dwarnings //g' ladybird/Meta/CMake/rust_crate.cmake

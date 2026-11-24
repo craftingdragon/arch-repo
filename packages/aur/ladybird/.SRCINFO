@@ -40,9 +40,11 @@ pkgbase = ladybird
 	source = git+https://github.com/microsoft/vcpkg.git#commit=8f363bdc11359ede4bc51e5eb32a2617538049c8
 	source = hb-fc-whole-archive.patch
 	source = gcc-build.patch
+	source = cargo-build-layout.patch
 	sha256sums = SKIP
 	sha256sums = SKIP
 	sha256sums = e268aed76a27dc8519be00f6c30a59ce2339683127839f8e097d14d92d7b4268
 	sha256sums = 4065634ed192973510df368f9148a19fbf4f2ebd1d7681c53163fa6f70f0412d
+	sha256sums = 497a25ffeab09d7b4d19210bde0659b7310bb8312e2e4ce1cc248d4d5a0ad2da
 
 pkgname = ladybird
