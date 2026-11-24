@@ -13,7 +13,7 @@ url='https://github.com/LadybirdBrowser/ladybird'
 license=(BSD-2-Clause)
 depends=(curl ffmpeg libgl qt6-base qt6-multimedia qt6-positioning ttf-liberation vulkan-icd-loader wayland xcb-util-wm)
 makedepends=(autoconf-archive automake cargo cmake git libtool make nasm ninja patch pkg-config tar unzip vulkan-headers zip)
-options=('!lto' '!debug' '!buildflags' '!staticlibs' '!emptydirs')
+options=('!lto' 'debug' '!buildflags' '!staticlibs' '!emptydirs')
 source=(
   "git+$url#tag=${pkgver}"
   "git+https://github.com/microsoft/vcpkg.git#commit=8f363bdc11359ede4bc51e5eb32a2617538049c8" # vcpkg.json:builtin-baseline
@@ -50,13 +50,17 @@ prepare() {
 
   "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
 
+  # !buildflags suppresses makepkg's debug flags.
   cmake \
     --preset Release \
     -B build \
     -S ladybird \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS=-g \
+    -DCMAKE_CXX_FLAGS=-g \
     -DLADYBIRD_VERSION="${pkgver}" \
+    -DLADYBIRD_BASELINE_CPU_TARGET=ON \
     $use_linker \
     -DLADYBIRD_VCPKG_TYPE=distribution \
     -DCMAKE_INSTALL_PREFIX='/opt/ladybird' \
@@ -70,7 +74,7 @@ build() {
   cd "${srcdir}"
   unset CARGO_TARGET_DIR
   export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"/\1/p' ladybird/rust-toolchain.toml)"
-  cmake --build build
+  CARGO_PROFILE_RELEASE_DEBUG=2 cmake --build build
 }
 
 package() {
