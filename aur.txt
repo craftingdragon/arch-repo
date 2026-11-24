@@ -33,3 +33,4 @@ mongosh-bin
 insomnia-bin
 onedrive-abraunegg
 ladybird
+ungoogled-chromium
