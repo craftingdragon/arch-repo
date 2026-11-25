@@ -1,0 +1,38 @@
+pkgname=ladybird-libpng
+pkgver=1.6.59
+pkgrel=1
+pkgdesc='Private static libpng with APNG support for Ladybird'
+arch=(x86_64)
+url='https://github.com/pnggroup/libpng'
+license=(libpng-2.0)
+depends=(zlib)
+makedepends=(cmake git ninja)
+options=(staticlibs !lto)
+source=(
+  "libpng::git+$url#commit=cd952f49f95bb27154ae77dbb103032d95f6e580"
+  "https://downloads.sourceforge.net/project/libpng-apng/libpng16/$pkgver/libpng-$pkgver-apng.patch.gz"
+)
+sha512sums=(
+  'SKIP'
+  'a27ed2769b3c8d1703267b807663aa8e543b62355237e223d7731662034dd126951b88117c1038dc976750cf515d7e0e26e4a9278bf951f96ec4ed8f74105db7'
+)
+noextract=("libpng-$pkgver-apng.patch.gz")
+
+prepare() {
+  cd libpng
+  gzip -dc "${srcdir}/libpng-$pkgver-apng.patch.gz" | patch -Np1
+}
+
+build() {
+  cmake -S libpng -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+    -DPNG_SHARED=OFF -DPNG_TESTS=OFF -DPNG_TOOLS=OFF
+  cmake --build build
+}
+
+package() {
+  install -Dm644 build/libpng16.a "$pkgdir/usr/lib/ladybird-libpng/libpng16.a"
+  install -Dm644 -t "$pkgdir/usr/include/ladybird-libpng" \
+    libpng/png.h libpng/pngconf.h build/pnglibconf.h
+  install -Dm644 libpng/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

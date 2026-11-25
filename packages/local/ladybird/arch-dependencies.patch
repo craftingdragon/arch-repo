@@ -1,0 +1,38 @@
+--- a/Meta/CMake/check_for_dependencies.cmake
++++ b/Meta/CMake/check_for_dependencies.cmake
+@@ -29,9 +29,9 @@
+ 
+ # TODO: Figure out if we can do this the same way on all platforms
+ if (NOT ANDROID)
+-    pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec-ladybird)
+-    pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil-ladybird)
+-    pkg_check_modules(LIBSWRESAMPLE REQUIRED IMPORTED_TARGET libswresample-ladybird)
++    pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec)
++    pkg_check_modules(AVUTIL REQUIRED IMPORTED_TARGET libavutil)
++    pkg_check_modules(LIBSWRESAMPLE REQUIRED IMPORTED_TARGET libswresample)
+ else()
+     find_package(FFMPEG REQUIRED)
+ endif()
+@@ -129,7 +129,6 @@
+ 
+     pkg_check_modules(skia skia=${SKIA_REQUIRED_VERSION} REQUIRED IMPORTED_TARGET skia)
+     set(SKIA_TARGET PkgConfig::skia)
+-    set_property(TARGET PkgConfig::skia APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS "SKCMS_DLL")
+ endif()
+ add_library(skia ALIAS ${SKIA_TARGET})
+ 
+--- a/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
++++ b/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
+@@ -483,9 +483,11 @@
+     codec_context->get_format = negotiate_pixel_format;
+     codec_context->get_buffer2 = get_buffer;
+     codec_context->opaque = this;
+-    // Only the bundled FFmpeg decodes AV1, and it is patched to know this flag.
++#ifdef AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS
++    // This flag is available in the patched FFmpeg build.
+     if (m_codec_id == CodecID::AV1 && !PlatformFeatures::ProcessFeatures::the().is_enabled(PlatformFeatures::Feature::VulkanVideoBundledFFmpegAV1KeepSequenceHeaderEnableRefMVsFlag))
+         codec_context->hwaccel_flags |= AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS;
++#endif
+ 
+     if (m_functions.avcodec_open2(codec_context, codec, nullptr) < 0)
+         return DecoderError::format(DecoderErrorCategory::Unknown, "Unknown error occurred when opening FFmpeg codec {}", m_codec_id);

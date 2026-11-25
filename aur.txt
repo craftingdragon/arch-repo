@@ -32,4 +32,8 @@ mongodb-tools-bin
 mongosh-bin
 insomnia-bin
 onedrive-abraunegg
-ladybird
+angle
+skia-static
+zmij
+vulkan-memory-allocator
+wuffs

@@ -1,0 +1,70 @@
+# Maintainer: Ali Mohammad Pur <totally@fakegmail.ch>
+# Contributor: Michał Wojdyła < micwoj9292 at gmail dot com >
+# Contributor: Fredrick R. Brennan <copypaste@kittens.ph>
+# Contributor: nyorain <nyorain at gmail dot com>
+
+pkgname=skia-static
+pkgver=148
+pkgrel=2
+pkgdesc='Skia 2D graphics library, static build'
+arch=(x86_64)
+url='https://github.com/google/skia'
+license=(BSD-3-Clause)
+depends=(expat fontconfig freetype2 gcc-libs glibc harfbuzz icu libglvnd libjpeg-turbo libpng libwebp zlib)
+makedepends=(git gn ninja python vulkan-headers)
+provides=(skia)
+conflicts=(skia)
+options=(staticlibs !lto)
+
+_commit=13ffba253fc7854fd3b34f67c82dfb2418dc2944
+# Match the Linux static target's external sources to this Skia revision's DEPS.
+source=(
+    "skia-${_commit}.tar.gz::$url/archive/${_commit}.tar.gz"
+    'dng_sdk::git+https://android.googlesource.com/platform/external/dng_sdk.git#commit=dbe0a676450d9b8c71bf00688bb306409b779e90'
+    'piex::git+https://android.googlesource.com/platform/external/piex.git#commit=bb217acdca1cc0c16b704669dd6f91a1b509c406'
+    'vulkanmemoryallocator::git+https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git#commit=a6bfc237255a6bac1513f7c1ebde6d8aed6b5191'
+    'wuffs::git+https://github.com/google/wuffs-mirror-release-c.git#commit=e3f919ccfe3ef542cfc983a82146070258fb57f8'
+    skia.pc
+)
+sha256sums=(
+    '70f9e41774095aaa35f3bf774d90f289a61a8ca0e25f3ecdbe9dac8e34a61665'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    'SKIP'
+    '7e4b4e488081e95ea7dc79338057835909e5e20aa505e0513a3cf6a76dcc6a9b'
+)
+
+prepare() {
+    cd "skia-${_commit}"
+    mkdir -p third_party/externals
+    local external
+    for external in dng_sdk piex vulkanmemoryallocator wuffs; do
+        ln -sfn "${srcdir}/$external" "third_party/externals/$external"
+    done
+
+    # Include skcms and Skia's other static GN dependencies in libskia.a.
+    sed -i '/^skia_component("skia") {/a\  complete_static_lib = true' BUILD.gn
+}
+
+build() {
+    cd "skia-${_commit}"
+    gn gen out/Static --args='
+        is_official_build=true
+        is_component_build=false
+        is_debug=false
+        skia_use_vulkan=true
+        skia_use_system_icu=true
+        extra_cflags_cc=["-USK_HIDE_PATH_EDIT_METHODS"]
+    '
+    ninja -C out/Static -j "$(nproc)" skia
+}
+
+package() {
+    cd "skia-${_commit}"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 out/Static/libskia.a "$pkgdir/usr/lib/libskia.a"
+    find include modules src -type f -name '*.h' \
+        -exec install -Dm644 '{}' "$pkgdir/usr/include/{}" \;
+    install -Dm644 "$srcdir/skia.pc" "$pkgdir/usr/lib/pkgconfig/skia.pc"
+}

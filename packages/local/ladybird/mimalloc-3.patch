@@ -1,0 +1,116 @@
+--- a/AK/kmalloc.cpp
++++ b/AK/kmalloc.cpp
+@@ -133,25 +133,43 @@
+     return mi_malloc(size);
+ }
+ 
+-// A mimalloc heap belongs to the thread that made it: only that thread may allocate from it, but any thread may free
+-// its memory. When the thread exits, mimalloc deletes its heaps, and what is still allocated stays valid until freed.
++// mimalloc 3 heaps can be shared. Each thread uses its own allocation context
++// within the backing heap for each partition and for scratch allocations.
+ static constexpr size_t PARTITION_COUNT = to_underlying(HeapPartition::String) + 1;
+-AK_TLS_INITIAL_EXEC static thread_local constinit mi_heap_t* s_partition_heaps[PARTITION_COUNT] {};
+-static thread_local mi_heap_t* s_scratch_heap = nullptr;
+-
+-static mi_heap_t* heap_for_partition(HeapPartition partition)
++AK_TLS_INITIAL_EXEC static thread_local constinit mi_theap_t* s_partition_heaps[PARTITION_COUNT] {};
++static thread_local mi_theap_t* s_scratch_heap = nullptr;
++
++static mi_theap_t* thread_heap(size_t index)
++{
++    static struct BackingHeaps {
++        mi_heap_t* heaps[PARTITION_COUNT + 1] {};
++
++        BackingHeaps()
++        {
++            for (size_t i = 1; i <= PARTITION_COUNT; ++i)
++                heaps[i] = mi_heap_new();
++        }
++    } const backing_heaps;
++
++    auto* heap = backing_heaps.heaps[index];
++    return heap ? mi_heap_theap(heap) : nullptr;
++}
++
++static mi_theap_t* heap_for_partition(HeapPartition partition)
+ {
+     if (partition == HeapPartition::General)
+-        return mi_heap_get_default();
+-    auto*& heap = s_partition_heaps[to_underlying(partition)];
++        return mi_theap_get_default();
++    auto index = to_underlying(partition);
++    auto*& heap = s_partition_heaps[index];
+     if (!heap) [[unlikely]]
+-        heap = mi_heap_new();
++        heap = thread_heap(index);
+     return heap;
+ }
+ 
+ void* ak_kmalloc(HeapPartition partition, size_t size)
+ {
+-    return mi_heap_malloc(heap_for_partition(partition), size);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_theap_malloc(heap, size) : nullptr;
+ }
+ 
+ void* ak_kmalloc_aligned(size_t size, size_t alignment)
+@@ -161,7 +179,8 @@
+ 
+ void* ak_kmalloc_aligned(HeapPartition partition, size_t size, size_t alignment)
+ {
+-    return mi_heap_malloc_aligned(heap_for_partition(partition), size, alignment);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_theap_malloc_aligned(heap, size, alignment) : nullptr;
+ }
+ 
+ void* ak_krealloc(void* ptr, size_t size)
+@@ -171,7 +190,8 @@
+ 
+ void* ak_krealloc(HeapPartition partition, void* ptr, size_t size)
+ {
+-    return mi_heap_realloc(heap_for_partition(partition), ptr, size);
++    auto* heap = heap_for_partition(partition);
++    return heap ? mi_theap_realloc(heap, ptr, size) : nullptr;
+ }
+ 
+ size_t ak_kmalloc_usable_size(void const* ptr)
+@@ -187,15 +207,15 @@
+ void ak_kmalloc_collect()
+ {
+     // NB: In a scratch heap, mi_collect() would collect that heap again instead of the thread's own.
+-    VERIFY(!s_scratch_heap || mi_heap_get_default() != s_scratch_heap);
++    VERIFY(!s_scratch_heap || mi_theap_get_default() != s_scratch_heap);
+ 
+     // mi_collect() only visits the calling thread's default heap, so its partitions have to be collected separately.
+     for (auto* heap : s_partition_heaps) {
+         if (heap)
+-            mi_heap_collect(heap, true);
++            mi_theap_collect(heap, true);
+     }
+     if (s_scratch_heap)
+-        mi_heap_collect(s_scratch_heap, true);
++        mi_theap_collect(s_scratch_heap, true);
+ 
+     mi_collect(true);
+ }
+@@ -203,16 +223,16 @@
+ void* ak_enter_scratch_heap()
+ {
+     if (!s_scratch_heap)
+-        s_scratch_heap = mi_heap_new();
++        s_scratch_heap = thread_heap(PARTITION_COUNT);
+     // NB: Without a heap of its own, the work allocates from the thread's heap as usual.
+     if (!s_scratch_heap)
+-        return mi_heap_get_default();
+-    return mi_heap_set_default(s_scratch_heap);
++        return mi_theap_get_default();
++    return mi_theap_set_default(s_scratch_heap);
+ }
+ 
+ void ak_leave_scratch_heap(void* previous_heap)
+ {
+-    mi_heap_set_default(static_cast<mi_heap_t*>(previous_heap));
++    mi_theap_set_default(static_cast<mi_theap_t*>(previous_heap));
+ }
+ 
+ // MADV_FREE leaves the pages in this process until the system runs short of memory. That pays off when they get reused

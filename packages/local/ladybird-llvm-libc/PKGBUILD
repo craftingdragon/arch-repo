@@ -1,0 +1,19 @@
+pkgname=ladybird-llvm-libc
+pkgver=1
+pkgrel=1
+pkgdesc='LLVM libc math headers used by Ladybird'
+arch=(any)
+url='https://github.com/llvm/llvm-project'
+license=('Apache-2.0 WITH LLVM-exception')
+_commit=e54169423e7ee5d8b41c2f1b6f7a59000c901ee0
+source=("llvm-project-${_commit}.tar.gz::$url/archive/${_commit}.tar.gz")
+noextract=("${source[0]%%::*}")
+sha256sums=('db3ee51752d716118e3ff1109c7920a32dfc29bd414112e8d18ff6280e608c1c')
+
+package() {
+  bsdtar -xf "${source[0]%%::*}" "llvm-project-${_commit}/libc"
+  cd "llvm-project-${_commit}/libc"
+  find hdr include shared src/__support src/string/memory_utils -type f -name '*.h' \
+    -exec install -Dm644 {} "$pkgdir/usr/include/llvm-libc/{}" \;
+  install -Dm644 LICENSE.TXT -t "$pkgdir/usr/share/licenses/$pkgname"
+}

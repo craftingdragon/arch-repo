@@ -1,0 +1,100 @@
+# Maintainer: Ali Mohammad Pur <totally@fakegmail.ch>
+# Contributor: Tim Schumacher <timschumi@gmx.de>
+# Contributor: Alexander F. Rødseth <xyproto@archlinux.org>
+# Contributor: Brian <brain@derelict.garden>
+
+pkgname=ladybird
+epoch=1
+pkgver=2026.47.8
+pkgrel=2
+pkgdesc='Truly independent web browser'
+arch=(x86_64)
+url='https://github.com/LadybirdBrowser/ladybird'
+license=(BSD-2-Clause)
+depends=(
+  angle cpptrace curl dbus ffmpeg fontconfig glib2 harfbuzz icu libavif libdrm
+  libedit libgl libjpeg-turbo libpsl libpulse libwebp libxml2 'mimalloc>=3.4'
+  openssl qt6-base
+  qt6-multimedia qt6-positioning qt6-wayland sdl3 simdjson simdutf sqlite
+  ttf-liberation vulkan-icd-loader wayland woff2 xcb-util-wm zlib
+)
+makedepends=(
+  cargo cmake fast_float git glslang ladybird-libpng ladybird-llvm-libc
+  ladybird-pdfjs lld ninja python skia-static vulkan-headers
+  vulkan-memory-allocator wuffs-lib zmij
+)
+options=('!lto' 'debug' '!buildflags' '!staticlibs' '!emptydirs')
+source=(
+  "git+$url#tag=${pkgver}"
+  'gcc-build.patch'
+  'cargo-build-layout.patch'
+  'arch-dependencies.patch'
+  'mimalloc-3.patch'
+)
+sha256sums=(
+  'SKIP'
+  '4065634ed192973510df368f9148a19fbf4f2ebd1d7681c53163fa6f70f0412d'
+  '497a25ffeab09d7b4d19210bde0659b7310bb8312e2e4ce1cc248d4d5a0ad2da'
+  '49265a2dc6277cbfcdf6b888a8131a42b3aa058014657b9b325a03b444c32c24'
+  'c5bf079884fbcd649043bf92e3db4179402760ff1db02c3b7a9c76071b15a959'
+)
+
+prepare() {
+  cd ladybird
+  local change
+  for change in "${source[@]:1}"; do
+    patch -Np1 -i "${srcdir}/${change}"
+  done
+
+  # Allow warnings introduced by newer Arch Rust releases.
+  sed -i 's/-Dwarnings //g' Meta/CMake/rust_crate.cmake
+  # OpenSSL 4 deprecates SSL_set1_host, which this release still calls.
+  sed -i '/^add_cxx_compile_options(-Werror)$/a add_cxx_compile_options(-Wno-error=deprecated-declarations)' \
+    Meta/CMake/compile_options.cmake
+}
+
+build() {
+  unset CARGO_TARGET_DIR
+  export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"/\1/p' ladybird/rust-toolchain.toml)"
+
+  # Keep debug line information while reducing memory use when linking WebContent.
+  cmake -S ladybird -B build -G Ninja \
+    -DBUILD_SHARED_LIBS=OFF \
+    -DBUILD_TESTING=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_FLAGS=-g1 \
+    -DCMAKE_CXX_FLAGS=-g1 \
+    -DCMAKE_EXE_LINKER_FLAGS=-Wl,--exclude-libs,libpng16.a \
+    -DCMAKE_INSTALL_PREFIX=/opt/ladybird \
+    -DCMAKE_INSTALL_RPATH=/opt/angle/usr/lib \
+    -DENABLE_INSTALL_HEADERS=OFF \
+    -DLADYBIRD_BASELINE_CPU_TARGET=ON \
+    -DLADYBIRD_ENABLE_LTO=OFF \
+    -DLADYBIRD_VERSION="${pkgver}" \
+    -DPDFJS_DIR=/usr/share/ladybird-pdfjs \
+    -DPNG_PNG_INCLUDE_DIR=/usr/include/ladybird-libpng \
+    -DPNG_LIBRARY_RELEASE=/usr/lib/ladybird-libpng/libpng16.a
+
+  CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cmake --build build
+}
+
+package() {
+  cd "${srcdir}"
+
+  local _component
+  for _component in ladybird_Runtime ladybird_SystemIntegration js wasm; do
+    DESTDIR="${pkgdir}" cmake --install build --component "${_component}"
+  done
+  ln -s /opt/ladybird/bin/js "${pkgdir}/usr/bin/js"
+  ln -s /opt/ladybird/bin/wasm "${pkgdir}/usr/bin/wasm"
+
+  find "$pkgdir" -name '*.a' -delete
+  find "$pkgdir" -name '*.cmake' -delete
+
+  local license_dir="${pkgdir}/usr/share/licenses/${pkgname}"
+  install -Dm644 ladybird/LICENSE -t "$license_dir"
+  local dependency
+  for dependency in ladybird-libpng ladybird-llvm-libc ladybird-pdfjs skia-static wuffs-lib zmij; do
+    install -Dm644 -t "$license_dir/$dependency" /usr/share/licenses/"$dependency"/LICENSE*
+  done
+}

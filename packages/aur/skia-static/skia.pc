@@ -1,0 +1,10 @@
+prefix=/usr
+includedir=${prefix}/include
+libdir=${prefix}/lib
+
+Name: skia
+Description: A complete 2D graphic library for drawing Text, Geometries, and Images.
+Version: 148
+Requires: expat fontconfig gl harfbuzz harfbuzz-subset icu-i18n
+Libs: -L${libdir} -lskia -lfreetype -ljpeg -lpng -lwebp -lwebpdemux -lwebpmux -lz -ldl -pthread
+Cflags: -I${includedir} -I${includedir}/src -I${includedir}/modules -I${includedir}/include

@@ -1,0 +1,35 @@
+pkgname=ladybird-pdfjs
+pkgver=6.5.438
+pkgrel=1
+pkgdesc='PDF.js assets patched for the Ladybird built-in viewer'
+arch=(any)
+url='https://github.com/mozilla/pdf.js'
+license=(Apache-2.0)
+source=(
+  "$url/releases/download/v$pkgver/pdfjs-$pkgver-dist.zip"
+  '0001-ladybird-embed.patch'
+)
+noextract=("${source[0]##*/}")
+sha256sums=(
+  'fcbe9ba21d9911843e3502adc178a7f549a524a4055f887bedc942e5490c6ba1'
+  '6112cc3d8564d580902cf2737ae128ff22e2a7d253bc6af6ecb6073c90f18281'
+)
+
+prepare() {
+  mkdir -p pdfjs
+  bsdtar -xf "${source[0]##*/}" -C pdfjs
+  cd pdfjs
+  patch -Np1 -i "${srcdir}/0001-ladybird-embed.patch"
+}
+
+package() {
+  cd pdfjs
+  local assets="$pkgdir/usr/share/ladybird-pdfjs"
+  install -Dm644 -t "$assets/build" build/*.mjs
+  install -Dm644 -t "$assets/web" web/viewer.{html,mjs,css}
+  install -Dm644 -t "$assets/web/images" web/images/*
+  install -Dm644 -t "$assets/web/wasm" web/wasm/*
+  install -Dm644 -t "$assets/web/locale/en-US" web/locale/en-US/viewer.ftl
+  printf '%s\n' '{"en-us":"en-US/viewer.ftl"}' > "$assets/web/locale/locale.json"
+  install -Dm644 -t "$pkgdir/usr/share/licenses/$pkgname" LICENSE web/wasm/LICENSE_*
+}
