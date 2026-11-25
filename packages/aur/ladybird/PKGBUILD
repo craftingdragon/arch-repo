@@ -5,8 +5,8 @@
 
 pkgname=ladybird
 epoch=1
-pkgver=2026.47.7
-pkgrel=2
+pkgver=2026.47.8
+pkgrel=1
 pkgdesc='Truly independent web browser'
 arch=(x86_64)
 url='https://github.com/LadybirdBrowser/ladybird'
@@ -50,15 +50,15 @@ prepare() {
 
   "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
 
-  # !buildflags suppresses makepkg's debug flags.
+  # Keep debug line information while reducing memory use when linking WebContent.
   cmake \
     --preset Release \
     -B build \
     -S ladybird \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_C_FLAGS=-g \
-    -DCMAKE_CXX_FLAGS=-g \
+    -DCMAKE_C_FLAGS=-g1 \
+    -DCMAKE_CXX_FLAGS=-g1 \
     -DLADYBIRD_VERSION="${pkgver}" \
     -DLADYBIRD_BASELINE_CPU_TARGET=ON \
     $use_linker \
@@ -74,7 +74,7 @@ build() {
   cd "${srcdir}"
   unset CARGO_TARGET_DIR
   export RUSTUP_TOOLCHAIN="$(sed -n 's/^channel = "\(.*\)"/\1/p' ladybird/rust-toolchain.toml)"
-  CARGO_PROFILE_RELEASE_DEBUG=2 cmake --build build
+  CARGO_PROFILE_RELEASE_DEBUG=line-tables-only cmake --build build
 }
 
 package() {
