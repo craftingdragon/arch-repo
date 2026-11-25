@@ -108,12 +108,24 @@ printf '\nMAKEFLAGS="-j%s"\n' "$RUNNER_NPROC" >> /etc/makepkg.conf
 runuser -u builder -- makepkg --printsrcinfo > /tmp/srcinfo
 python - <<'PY'
 from pathlib import Path
-fields = {'depends', 'makedepends', 'checkdepends', 'depends_x86_64', 'makedepends_x86_64', 'checkdepends_x86_64'}
+import re
+
+entries = [line.strip().partition(' = ') for line in Path('/tmp/srcinfo').read_text().splitlines()]
+outputs = {value for key, _, value in entries if key == 'pkgname'}
+runtime_fields = {'depends', 'depends_x86_64'}
+fields = runtime_fields | {'makedepends', 'checkdepends', 'makedepends_x86_64', 'checkdepends_x86_64'}
 deps = []
-for line in Path('/tmp/srcinfo').read_text().splitlines():
-    key, sep, value = line.strip().partition(' = ')
-    if sep and key in fields:
-        deps.append(value)
+package_section = False
+for key, sep, value in entries:
+    if key == 'pkgname':
+        package_section = True
+    if not sep or key not in fields:
+        continue
+    # makepkg builds every split output together. A sibling runtime dependency
+    # is resolved when the resulting packages are installed.
+    if package_section and key in runtime_fields and re.split(r'[<>=]', value, maxsplit=1)[0] in outputs:
+        continue
+    deps.append(value)
 Path('/tmp/deps').write_text('\n'.join(dict.fromkeys(deps)))
 PY
 # Supply built packages through a temporary local repository, letting pacman
