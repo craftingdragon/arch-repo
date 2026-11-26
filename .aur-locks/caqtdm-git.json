@@ -2,6 +2,6 @@
   "commit": "46ada0ed4af743dddd111da8bab8c622b1474d7a",
   "digest": "8d36f71ba8469abe7214302a5f59beaaa69d7a9a2524f32ce83d2ee825db93f8",
   "vcs_sources": {
-    "caqtdm::git+https://github.com/caqtdm/caqtdm.git": "6edc09b9d162cfb2450bcbfa1d1961cbc0a14b05"
+    "caqtdm::git+https://github.com/caqtdm/caqtdm.git": "e0eab6b62c5f03daa0cdc623e4e7294b8389267b"
   }
 }
