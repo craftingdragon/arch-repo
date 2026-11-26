@@ -143,7 +143,12 @@ mapfile -t deps < /tmp/deps
 if ((${#deps[@]})); then pacman -S --needed --noconfirm -- "${deps[@]}" || exit 42; fi
 # Import declared source-verification keys, without disabling checks.
 while read -r key; do
-  runuser -u builder -- gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys "$key"
+  keyfile="keys/pgp/$key.asc"
+  if [[ -f "$keyfile" ]]; then
+    runuser -u builder -- gpg --import -- "$keyfile"
+  else
+    runuser -u builder -- gpg --keyserver hkps://keyserver.ubuntu.com --recv-keys "$key"
+  fi
 done < <(sed -n 's/^[[:space:]]*validpgpkeys = //p' /tmp/srcinfo)
 runuser -u builder -- env PKGEXT=.pkg.tar.zst makepkg --cleanbuild --noconfirm
 for package in *.pkg.tar.zst; do

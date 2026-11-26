@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Maintainer: craftingDragon7
+pkgname=rplusplus
+pkgver=0.2.0
+pkgrel=1
+pkgdesc='Experimental Cargo-free Rust compiler driver and native CMake integration'
+arch=('x86_64')
+url='https://github.com/craftingdragon/rplusplus'
+license=('GPL-3.0-or-later')
+# rustup provides unversioned rust. CMake checks the selected rustc version.
+depends=('rust' 'cmake>=3.25' 'gcc-libs')
+makedepends=('ninja' 'python')
+# Mixed Rust/C++ links need regular C++ objects, not GCC LTO bytecode.
+options=('!lto')
+source=("$url/releases/download/v${pkgver}/${pkgname}-${pkgver}.tar.gz"{,.asc})
+sha256sums=('3f30391eb985048ff57bfd91baf87615d5824fbfb74c83c897eed56e99b15df2'
+            'd6144f7baad863a5a44027b137e72e4381aa401abadbc8adabc9f11baba3d91c')
+validpgpkeys=('96653CBEFDD9F8E0F7B288881396EBBD1AADE388')
+
+build() {
+  cmake -S "$pkgname-$pkgver" -B build -G Ninja \
+    -DCMAKE_INSTALL_PREFIX=/usr -DRPP_RUSTC_EXECUTABLE="${RPP_RUSTC_EXECUTABLE:-/usr/bin/rustc}"
+  cmake --build build
+}
+
+check() {
+  RPP_TEST_RUSTC="${RPP_RUSTC_EXECUTABLE:-/usr/bin/rustc}" ctest --test-dir build --output-on-failure
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+}
