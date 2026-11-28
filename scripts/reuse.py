@@ -9,6 +9,8 @@ import tempfile
 from urllib.request import Request, urlopen
 from urllib.parse import quote
 
+USER_AGENT = 'crafting-repo/1.0 (+https://github.com/craftingdragon/arch-repo)'
+
 
 def sha(path):
     result = hashlib.sha256()
@@ -78,7 +80,7 @@ def invalidate(records, previous, dirty):
 
 
 def fetch(url, path):
-    request = Request(url, headers={'User-Agent': 'crafting-repo/1.0 (+https://github.com/craftingdragon/arch-repo)'})
+    request = Request(url, headers={'User-Agent': USER_AGENT})
     with urlopen(request, timeout=30) as response, path.open('wb') as output:
         import shutil
         shutil.copyfileobj(response, output)

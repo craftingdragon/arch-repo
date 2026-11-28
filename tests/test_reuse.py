@@ -108,9 +108,9 @@ class ReuseTests(unittest.TestCase):
             def restore_archive(record, url, staging):
                 (staging / 'example.pkg.tar.zst').write_bytes(b'reused')
                 return True
-            def compile_package(*args):
-                (out / 'example.pkg.tar.zst').write_bytes(b'new')
-                (out / 'example.pkg.tar.zst.meta').write_text('pkgname = example\npkgver = 1-1\narch = any\n')
+            def compile_package(*args, result, **kwargs):
+                (result / 'example.pkg.tar.zst').write_bytes(b'new')
+                (result / 'example.pkg.tar.zst.meta').write_text('pkgname = example\npkgver = 1-1\narch = any\n')
             with patch.object(build, 'ROOT', root), patch.object(build, 'OUT', out), \
                  patch.object(build.subprocess, 'run', side_effect=metadata_container), \
                  patch.object(build.reuse, 'restore', return_value={'packages/local/example': record}), \
@@ -126,3 +126,28 @@ class ReuseTests(unittest.TestCase):
                 build.main()
                 compile_call.assert_called_once()
                 self.assertEqual((out / 'example.pkg.tar.zst').read_bytes(), b'new')
+
+    def test_build_batches_independent_recipes_before_consumer(self):
+        import sys
+        with patch('sys.path', [str(Path('scripts').resolve()), *sys.path]):
+            import build
+
+        records = {
+            'consumer': {'dependencies': ['first', 'second']},
+            'first': {'dependencies': []},
+            'second': {'dependencies': []},
+        }
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(build.os, 'sched_getaffinity', return_value={0, 1, 2, 3}), \
+             patch.object(build.os, 'sysconf', side_effect=lambda key: {
+                 'SC_PHYS_PAGES': 4_194_304, 'SC_PAGE_SIZE': 4096,
+             }[key]), \
+             patch.object(build, 'build_one', return_value=True) as compile_call, \
+             patch.object(build, 'merge_outputs') as merge:
+            build.build_pending(records, records, Path(tmp))
+        calls = {call.args[0]: call.args for call in compile_call.call_args_list}
+        self.assertEqual([call.args[0] for call in merge.call_args_list],
+                         ['first', 'second', 'consumer'])
+        self.assertNotEqual(calls['first'][2], calls['second'][2])
+        self.assertEqual(set(calls['first'][3]) | set(calls['second'][3]), {0, 1, 2, 3})
+        self.assertEqual(calls['consumer'][3:], ((), None))

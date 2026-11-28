@@ -62,13 +62,25 @@ checks unless its lock is explicitly reconciled.
 
 ## Builds and publishing
 
-Pushes to `master` build and publish the repository through GitHub Actions.
+Pushes to `master` start a 90-second wait before building. A newer push cancels
+an older automatic build. The current commit is checked before signing and again
+before deployment. Once a deployment starts, it can finish while the next
+commit builds. Manual rebuilds and republish runs start without the wait.
+
 Recipes build in disposable Arch containers, with repository dependencies built
 first. Unchanged packages are reused from the verified signed build manifest.
 Packages, repository databases, and the manifest are signed before deployment.
 
 Cloudflare Pages serves the website and databases. Package archives and signatures
-are stored in R2, with redirects from the repository URL.
+are stored in R2, with redirects from the repository URL. Deployment checks
+exact R2 keys before uploading and updates Pages only after the required
+objects are available.
+
+Actions job summaries report build phases, artifact sizes, R2 upload volume, and
+Ladybird compiler-cache statistics when the cache is enabled. To compare a
+manual Ladybird build with and without the cache, run from the same commit with
+`ladybird_cache` enabled or disabled. Use `force_rebuild` if the recipe would
+otherwise reuse its published output. This rebuilds all recipes.
 
 For a full local build, you need Python 3, Git, and a running Docker daemon:
 

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Separate immutable R2 downloads from the small, atomic Pages deployment."""
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -7,6 +8,20 @@ from pathlib import Path
 import re
 import shutil
 from urllib.parse import quote, urlsplit
+from urllib.request import Request, urlopen
+from http.client import HTTPException
+
+from reuse import USER_AGENT
+
+
+def already_public(url, key, size):
+    request = Request(f'{url}/{quote(key, safe="/")}', method='HEAD',
+                      headers={'User-Agent': USER_AGENT})
+    try:
+        with urlopen(request, timeout=5) as response:
+            return response.status == 200 and response.headers.get('Content-Length') == str(size)
+    except (OSError, HTTPException):
+        return False
 
 
 def main():
@@ -46,18 +61,37 @@ def main():
     # Cloudflare limits static redirects to 2000. Reject before moving files.
     if len(redirects) > 2000 or any(len(rule) > 1000 for rule in redirects):
         raise ValueError('Too many package redirects for Cloudflare Pages (maximum 2000)')
+    index = {key: source.stat().st_size for source, key in files}
+    archives = [key for key in index if key.endswith('.pkg.tar.zst')]
+    omitted = set()
+    if os.environ.get('R2_INCREMENTAL') == 'true':
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            available = pool.map(lambda key: already_public(url, key, index[key]), archives)
+            omitted = {key for key, present in zip(archives, available) if present}
+
     for source, key in files:
-        target = r2 / key
+        if key in omitted:
+            source.unlink()
+        else:
+            target = r2 / key
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(source, target)
+    # libalpm also needs a signature next to the package's effective URL.
+    signatures = [key for key in index if key.endswith('.sig')]
+    for package, signature in zip(archives, signatures, strict=True):
+        alias = package + '.sig'
+        target = r2 / alias
         target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(source, target)
-    # libalpm appends .sig to the package's final effective URL after redirects.
-    # Keep the content-addressed signature URL for direct links, and also expose
-    # a valid signature beside the package for pacman's automatic fetch.
-    for i in range(0, len(files), 2):
-        package = r2 / files[i][1]
-        signature = r2 / files[i + 1][1]
-        shutil.copyfile(signature, package.with_name(package.name + '.sig'))
+        shutil.copyfile(r2 / signature, target)
+        index[alias] = index[signature]
     r2.mkdir(exist_ok=True)
+    Path('r2-index.json').write_text(json.dumps(index, sort_keys=True) + '\n')
+    staged_bytes = sum(size for key, size in index.items() if key not in omitted)
+    summary = f'R2 handoff: {staged_bytes:,} bytes, omitted {len(omitted)} unchanged archives'
+    print(summary)
+    if summary_path := os.environ.get('GITHUB_STEP_SUMMARY'):
+        with open(summary_path, 'a') as stream:
+            print(summary, file=stream)
     (site / '_redirects').write_text('\n'.join(redirects) + ('\n' if redirects else ''))
     # Mutable databases stay on Pages and must not be cached across deployments.
     (site / '_headers').write_text('/x86_64/*\n  Cache-Control: no-cache\n/build-manifest.json*\n  Cache-Control: no-cache\n/repo-key.asc\n  Cache-Control: no-cache\n')

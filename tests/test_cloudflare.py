@@ -4,13 +4,17 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import sys
+import tarfile
+from types import SimpleNamespace
 import tempfile
 import unittest
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('cloudflare', 'scripts/prepare-cloudflare.py')
 cloudflare = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(cloudflare)
+with patch('sys.path', [str(Path('scripts').resolve()), *sys.path]):
+    spec.loader.exec_module(cloudflare)
 
 
 class CloudflareTests(unittest.TestCase):
@@ -71,3 +75,64 @@ class CloudflareTests(unittest.TestCase):
             with self.subTest(url=url), patch.dict(os.environ, R2_PUBLIC_URL=url):
                 with self.assertRaises(ValueError):
                     cloudflare.main()
+
+
+    def test_incremental_handoff_keeps_signatures_and_archive_index(self):
+        with patch.dict(os.environ, R2_INCREMENTAL='true'), patch.object(
+            cloudflare, 'already_public', return_value=True
+        ) as lookup:
+            cloudflare.main()
+        key = f'sha256/{self.digest}/{self.name}'
+        lookup.assert_called_once_with('https://packages.example.invalid', key, 7)
+        self.assertFalse((Path('r2') / key).exists())
+        self.assertEqual((Path('r2') / (key + '.sig')).read_bytes(), b'signature')
+        self.assertEqual(json.loads(Path('r2-index.json').read_text())[key], 7)
+
+
+class R2UploadTests(unittest.TestCase):
+    def setUp(self):
+        scripts = Path('scripts').resolve()
+        with patch('sys.path', [str(scripts), *sys.path]):
+            spec = importlib.util.spec_from_file_location('r2_upload', scripts / 'upload-r2.py')
+            self.upload = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(self.upload)
+
+    def test_exact_key_checks_skip_existing_and_fail_on_unexpected_responses(self):
+        existing = 'existing'
+        missing = 'missing'
+
+        def head(args, **kwargs):
+            if args[args.index('--key') + 1] in (existing, existing + '.sig'):
+                return SimpleNamespace(returncode=0, stdout='7\n', stderr='')
+            return SimpleNamespace(returncode=254, stdout='', stderr='(404) HeadObject')
+
+        with patch.object(self.upload.subprocess, 'run', side_effect=head):
+            self.assertEqual(self.upload.upload_plan(['aws'], 'bucket', {existing: 7, missing: 7}),
+                             [missing])
+            self.assertEqual(self.upload.upload_plan(['aws'], 'bucket',
+                                                     {existing: 7, existing + '.sig': 8}),
+                             [existing + '.sig'])
+            with self.assertRaisesRegex(RuntimeError, 'Unexpected size'):
+                self.upload.upload_plan(['aws'], 'bucket', {existing: 8})
+        with patch.object(self.upload.subprocess, 'run',
+                          return_value=SimpleNamespace(returncode=254, stdout='', stderr='(403) HeadObject')):
+            with self.assertRaisesRegex(RuntimeError, 'Cannot check'):
+                self.upload.upload_plan(['aws'], 'bucket', {existing: 7})
+
+    def test_omitted_epoch_archive_recovers_only_if_digest_matches(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            name = 'example-1:2.0-1-x86_64.pkg.tar.zst'
+            source = root / name
+            source.write_bytes(b'package')
+            artifact = root / 'packages.tar'
+            with tarfile.open(artifact, 'w') as tar:
+                tar.add(source, arcname=f'./{name}')
+            digest = hashlib.sha256(source.read_bytes()).hexdigest()
+            good = f'sha256/{digest}/{name}'
+            bad = f'sha256/{"0" * 64}/{name}'
+            with patch.object(self.upload, 'STAGING', root / 'staged'):
+                self.upload.recover_archives([good], artifact, {good: 7})
+                self.assertEqual((self.upload.STAGING / good).read_bytes(), b'package')
+                with self.assertRaisesRegex(ValueError, 'checksum mismatch'):
+                    self.upload.recover_archives([bad], artifact, {bad: 7})

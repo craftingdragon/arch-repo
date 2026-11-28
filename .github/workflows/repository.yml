@@ -8,28 +8,49 @@ on:
         description: Rebuild every package without reuse
         type: boolean
         default: false
+      ladybird_cache:
+        description: Enable the Ladybird compiler cache for this manual build
+        type: boolean
+        default: false
       republish_run_id:
         description: Re-sign and publish the packages artifact from a successful master publication run, without building
         type: string
         default: ''
 permissions:
   contents: read
-concurrency:
-  group: repository-publication
-  cancel-in-progress: false
 jobs:
   build:
+    outputs:
+      current: ${{ steps.freshness.outputs.current }}
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'repository-automatic-build' || format('repository-manual-build-{0}', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' }}
     permissions:
       contents: read
       actions: read
     steps:
+      - name: Record runner queue time
+        continue-on-error: true
+        run: |
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+          echo "Time from workflow creation to build runner: $(($(date +%s) - $(date -d "$created" +%s)))s" >> "$GITHUB_STEP_SUMMARY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Wait for the last push
+        if: github.event_name == 'push'
+        run: sleep 90
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check current master before building
+        id: freshness
+        run: python scripts/publication-freshness.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Validate republish source
-        if: inputs.republish_run_id != '' && inputs.republish_run_id != null
+        if: steps.freshness.outputs.current == 'true' && (inputs.republish_run_id != '' && inputs.republish_run_id != null)
         run: |
           [[ "$SOURCE_RUN_ID" =~ ^[0-9]+$ ]]
           test "$FORCE_REBUILD" != true
@@ -38,6 +59,10 @@ jobs:
               and (.event == "push" or .event == "workflow_dispatch")
               and .path == ".github/workflows/repository.yml") | .head_sha')
           test -n "$source_sha" || { echo 'Source must be a successful master publication run'; exit 1; }
+          deployed=$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN_ID/jobs?filter=latest" --jq '
+            .jobs[] | select(.name == "deploy" and .conclusion == "success")
+            | .steps[] | select(.name == "Deploy website and repository databases" and .conclusion == "success") | .name')
+          test -n "$deployed" || { echo 'Source run did not deploy Pages'; exit 1; }
           recipe_changes=$(gh api "repos/$GITHUB_REPOSITORY/compare/$source_sha...$GITHUB_SHA" --jq '
             [.files[].filename | select(startswith("packages/") or startswith(".aur-locks/") or . == "aur.txt")] | length')
           test "$recipe_changes" = 0 || { echo 'Recipes or source locks changed since the source build'; exit 1; }
@@ -47,24 +72,62 @@ jobs:
           SOURCE_RUN_ID: ${{ inputs.republish_run_id }}
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: inputs.republish_run_id != '' && inputs.republish_run_id != null
+        if: steps.freshness.outputs.current == 'true' && (inputs.republish_run_id != '' && inputs.republish_run_id != null)
         with:
           name: packages
           path: artifacts
           run-id: ${{ inputs.republish_run_id }}
           github-token: ${{ github.token }}
       - name: Restore previously built packages
-        if: inputs.republish_run_id != '' && inputs.republish_run_id != null
-        run: tar -xf artifacts/packages.tar
+        if: steps.freshness.outputs.current == 'true' && (inputs.republish_run_id != '' && inputs.republish_run_id != null)
+        run: |
+          mkdir -p out
+          tar -xf artifacts/packages.tar -C out
+      - name: Prepare Arch builder image
+        if: steps.freshness.outputs.current == 'true' && !inputs.republish_run_id
+        run: |
+          start=$SECONDS
+          docker build --pull -t crafting-arch-builder -f scripts/arch-builder.Dockerfile scripts
+          echo "Prepared Arch builder image: $((SECONDS - start))s" >> "$GITHUB_STEP_SUMMARY"
+      - name: Select Ladybird compiler cache
+        id: ladybird
+        if: steps.freshness.outputs.current == 'true' && !inputs.republish_run_id
+        run: |
+          if [[ "$MANUAL_CACHE" == true ]]; then
+            echo "directory=$RUNNER_TEMP/ladybird-ccache" >> "$GITHUB_OUTPUT"
+          elif [[ "$GITHUB_EVENT_NAME" == push && "$BEFORE" =~ ^[a-f0-9]{40}$ && "$BEFORE" != 0000000000000000000000000000000000000000 ]]; then
+            changes=$(gh api "repos/$GITHUB_REPOSITORY/compare/$BEFORE...$GITHUB_SHA" --jq '
+              [ .files[].filename | select(test("^packages/(local/ladybird(-libpng|-llvm-libc|-pdfjs)?|aur/(angle|skia-static|vulkan-memory-allocator|wuffs|zmij))/")) ] | length
+            ' 2>/dev/null) || changes=0
+            if [[ "$changes" != 0 ]]; then
+              echo "directory=$RUNNER_TEMP/ladybird-ccache" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          MANUAL_CACHE: ${{ inputs.ladybird_cache || false }}
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        if: steps.ladybird.outputs.directory != ''
+        with:
+          path: ${{ steps.ladybird.outputs.directory }}
+          key: ladybird-ccache-v1-${{ runner.arch }}-${{ hashFiles('scripts/arch-builder.Dockerfile') }}-${{ github.sha }}
+          restore-keys: ladybird-ccache-v1-${{ runner.arch }}-${{ hashFiles('scripts/arch-builder.Dockerfile') }}-
       - run: python -u scripts/build.py
-        if: inputs.republish_run_id == '' || inputs.republish_run_id == null
+        if: steps.freshness.outputs.current == 'true' && (inputs.republish_run_id == '' || inputs.republish_run_id == null)
         env:
           PAGES_URL: https://arch.craftingdragon.ch
           FORCE_REBUILD: ${{ inputs.force_rebuild || false }}
+          ARCH_BUILDER_IMAGE: crafting-arch-builder
+          LADYBIRD_CCACHE_DIR: ${{ steps.ladybird.outputs.directory }}
       # Package filenames may contain epochs (:) that upload-artifact rejects.
       - name: Pack build outputs for transfer
-        run: tar -cf packages.tar -C out .
+        if: steps.freshness.outputs.current == 'true'
+        run: |
+          tar -cf packages.tar -C out .
+          echo "Build artifact: $(stat -c %s packages.tar) bytes" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.freshness.outputs.current == 'true'
         with:
           name: packages
           path: packages.tar
@@ -72,6 +135,9 @@ jobs:
           if-no-files-found: error
   sign:
     needs: build
+    if: needs.build.outputs.current == 'true'
+    outputs:
+      current: ${{ steps.freshness.outputs.current }}
     runs-on: ubuntu-latest
     environment: repository-signing
     container: archlinux:base
@@ -80,26 +146,40 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check current master before signing
+        id: freshness
+        run: python scripts/publication-freshness.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.freshness.outputs.current == 'true'
         with:
           name: packages
           path: artifacts
       - name: Unpack build outputs
+        if: steps.freshness.outputs.current == 'true'
         run: |
           mkdir -p out
           tar -xf artifacts/packages.tar -C out
       - run: bash scripts/publish.sh
+        if: steps.freshness.outputs.current == 'true'
         env:
           SIGNING_KEY: ${{ secrets.REPO_SIGNING_KEY }}
           SIGNING_PASSPHRASE: ${{ secrets.REPO_SIGNING_PASSPHRASE }}
           PAGES_URL: https://arch.craftingdragon.ch
       - name: Prepare R2 objects and Pages redirects
+        if: steps.freshness.outputs.current == 'true'
         run: python scripts/prepare-cloudflare.py
         env:
           R2_PUBLIC_URL: https://packages.craftingdragon.ch
+          R2_INCREMENTAL: "true"
       - name: Pack signed publication
-        run: tar -cf publication.tar site r2
+        if: steps.freshness.outputs.current == 'true'
+        run: |
+          tar -cf publication.tar site r2 r2-index.json
+          echo "Publication artifact: $(stat -c %s publication.tar) bytes" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.freshness.outputs.current == 'true'
         with:
           name: publication
           path: publication.tar
@@ -107,6 +187,11 @@ jobs:
           if-no-files-found: error
   deploy:
     needs: sign
+    if: needs.sign.outputs.current == 'true'
+    concurrency:
+      group: repository-publication
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -117,26 +202,47 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Check current master before deployment
+        id: freshness
+        run: python scripts/publication-freshness.py
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.freshness.outputs.current == 'true'
         with:
           name: publication
           path: artifacts
-      - run: tar -xf artifacts/publication.tar
+      - name: Unpack signed publication
+        if: steps.freshness.outputs.current == 'true'
+        run: tar -xf artifacts/publication.tar
       - name: Install deployment clients
+        if: steps.freshness.outputs.current == 'true'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y awscli
+          if ! command -v aws >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y awscli
+          fi
           npm ci
       # Upload immutable objects first. Failed uploads never advance Pages.
       # Keep old objects so cached 301s and earlier deployments still work.
-      # SHA-256 keys identify content; ignore timestamps refreshed by signing/staging.
-      - name: Upload packages and signatures to R2
-        run: |
-          test -n "$CLOUDFLARE_ACCOUNT_ID"
-          test -n "$R2_BUCKET"
-          aws s3 sync r2/ "s3://$R2_BUCKET/" \
-            --endpoint-url "https://$CLOUDFLARE_ACCOUNT_ID.r2.cloudflarestorage.com" \
-            --cache-control 'public,max-age=31536000,immutable' --size-only --no-progress
+      - name: Check exact package and signature keys in R2
+        id: r2
+        if: steps.freshness.outputs.current == 'true'
+        run: python scripts/upload-r2.py plan
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.r2.outputs.recovery == 'true'
+        with:
+          name: packages
+          path: recovery
+      - name: Upload missing packages and signatures to R2
+        if: steps.freshness.outputs.current == 'true'
+        run: python scripts/upload-r2.py upload
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           R2_BUCKET: ${{ vars.R2_BUCKET }}
@@ -144,6 +250,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
       - name: Deploy website and repository databases
+        if: steps.freshness.outputs.current == 'true'
         run: npx --no-install wrangler pages deploy site --project-name=crafting-repo --branch=master
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
