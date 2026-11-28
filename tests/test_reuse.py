@@ -151,3 +151,21 @@ class ReuseTests(unittest.TestCase):
         self.assertNotEqual(calls['first'][2], calls['second'][2])
         self.assertEqual(set(calls['first'][3]) | set(calls['second'][3]), {0, 1, 2, 3})
         self.assertEqual(calls['consumer'][3:], ((), None))
+
+    def test_wordcraft_build_gets_full_runner_alongside_an_unrelated_update(self):
+        import sys
+        with patch('sys.path', [str(Path('scripts').resolve()), *sys.path]):
+            import build
+
+        recipes = ('packages/aur/vesktop-electron-git', 'packages/aur/wordcraft')
+        records = {base: {'dependencies': []} for base in recipes}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(build.os, 'sched_getaffinity', return_value={0, 1, 2, 3}), \
+             patch.object(build.os, 'sysconf', side_effect=lambda key: {
+                 'SC_PHYS_PAGES': 4_194_304, 'SC_PAGE_SIZE': 4096,
+             }[key]), \
+             patch.object(build, 'build_one', return_value=True) as compile_call, \
+             patch.object(build, 'merge_outputs'):
+            build.build_pending(records, records, Path(tmp))
+        self.assertEqual([(call.args[0], *call.args[3:]) for call in compile_call.call_args_list],
+                         [(base, (), None) for base in recipes])

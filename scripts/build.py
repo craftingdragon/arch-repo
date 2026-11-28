@@ -16,6 +16,9 @@ import subprocess
 ROOT = Path.cwd()
 OUT = ROOT / 'out'
 
+# These builds can exceed the memory available to one recipe in a pair.
+SERIAL_RECIPES = {'packages/aur/wordcraft', 'packages/local/ladybird'}
+
 
 def docker(recipe, script, *, result, cpus, memory):
     cache_root = os.environ.get('LADYBIRD_CCACHE_DIR')
@@ -295,7 +298,7 @@ def build_pending(records, dirty, staging):
         ready = [base for base in pending if not pending.keys() & set(records[base]['dependencies'])]
         batch = []
         if ready:
-            batch = ready[:2] if parallel and 'packages/local/ladybird' not in ready[:2] else ready[:1]
+            batch = ready[:2] if parallel and SERIAL_RECIPES.isdisjoint(ready[:2]) else ready[:1]
             if attempt(batch):
                 continue
         # The graph overapproximates possible providers. Let pacman resolve cases
