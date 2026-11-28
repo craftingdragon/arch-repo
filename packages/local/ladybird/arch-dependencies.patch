@@ -1,7 +1,24 @@
+diff --git a/Libraries/LibMediaCodecs/CMakeLists.txt b/Libraries/LibMediaCodecs/CMakeLists.txt
+index 94a16859..c0302a2a 100644
+--- a/Libraries/LibMediaCodecs/CMakeLists.txt
++++ b/Libraries/LibMediaCodecs/CMakeLists.txt
+@@ -55,10 +55,6 @@ if (USE_VULKAN_DMABUF_IMAGES)
+ endif()
+
+-# The Vulkan decoder reaches into FFmpeg's structs, so the code that does is also compiled against the headers of each
+-# other FFmpeg release, to decode with a system FFmpeg of that version.
++# The Arch package uses the installed FFmpeg headers for Vulkan decoding.
+ set(SYSTEM_FFMPEG_HEADER_MAJORS "")
+-if (LINUX AND NOT ANDROID AND USE_VULKAN_DMABUF_IMAGES)
+-    include(system_ffmpeg_headers)
+-endif()
+ foreach(major IN LISTS SYSTEM_FFMPEG_HEADER_MAJORS)
+     set(objects LibMediaCodecsForLibAVCodec${major})
+diff --git a/Meta/CMake/check_for_dependencies.cmake b/Meta/CMake/check_for_dependencies.cmake
+index d30e96e9..cd4746fd 100644
 --- a/Meta/CMake/check_for_dependencies.cmake
 +++ b/Meta/CMake/check_for_dependencies.cmake
-@@ -29,9 +29,9 @@
- 
+@@ -30,7 +30,7 @@ pkg_check_modules(WOFF2 REQUIRED IMPORTED_TARGET libwoff2dec)
  # TODO: Figure out if we can do this the same way on all platforms
  if (NOT ANDROID)
 -    pkg_check_modules(AVCODEC REQUIRED IMPORTED_TARGET libavcodec-ladybird)
@@ -12,27 +29,9 @@
 +    pkg_check_modules(LIBSWRESAMPLE REQUIRED IMPORTED_TARGET libswresample)
  else()
      find_package(FFMPEG REQUIRED)
- endif()
-@@ -129,7 +129,6 @@
- 
+@@ -169,5 +169,4 @@ else()
      pkg_check_modules(skia skia=${SKIA_REQUIRED_VERSION} REQUIRED IMPORTED_TARGET skia)
      set(SKIA_TARGET PkgConfig::skia)
 -    set_property(TARGET PkgConfig::skia APPEND PROPERTY INTERFACE_COMPILE_DEFINITIONS "SKCMS_DLL")
  endif()
  add_library(skia ALIAS ${SKIA_TARGET})
- 
---- a/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
-+++ b/Libraries/LibMediaCodecs/FFmpeg/FFmpegVulkanVideoDecoder.cpp
-@@ -483,9 +483,11 @@
-     codec_context->get_format = negotiate_pixel_format;
-     codec_context->get_buffer2 = get_buffer;
-     codec_context->opaque = this;
--    // Only the bundled FFmpeg decodes AV1, and it is patched to know this flag.
-+#ifdef AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS
-+    // This flag is available in the patched FFmpeg build.
-     if (m_codec_id == CodecID::AV1 && !PlatformFeatures::ProcessFeatures::the().is_enabled(PlatformFeatures::Feature::VulkanVideoBundledFFmpegAV1KeepSequenceHeaderEnableRefMVsFlag))
-         codec_context->hwaccel_flags |= AV_HWACCEL_FLAG_LADYBIRD_CLEAR_UNUSED_REF_FRAME_MVS;
-+#endif
- 
-     if (m_functions.avcodec_open2(codec_context, codec, nullptr) < 0)
-         return DecoderError::format(DecoderErrorCategory::Unknown, "Unknown error occurred when opening FFmpeg codec {}", m_codec_id);

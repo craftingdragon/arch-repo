@@ -1,7 +1,7 @@
 pkgbase = ladybird
 	pkgdesc = Truly independent web browser
-	pkgver = 2026.47.8
-	pkgrel = 2
+	pkgver = 2026.48.0
+	pkgrel = 1
 	epoch = 1
 	url = https://github.com/LadybirdBrowser/ladybird
 	arch = x86_64
@@ -39,7 +39,6 @@ pkgbase = ladybird
 	depends = libpsl
 	depends = libpulse
 	depends = libwebp
-	depends = libxml2
 	depends = mimalloc>=3.4
 	depends = openssl
 	depends = qt6-base
@@ -56,20 +55,20 @@ pkgbase = ladybird
 	depends = woff2
 	depends = xcb-util-wm
 	depends = zlib
+	depends = libavcodec.so=63-64
+	depends = libswresample.so=7-64
 	options = !lto
 	options = debug
 	options = !buildflags
 	options = !staticlibs
 	options = !emptydirs
-	source = git+https://github.com/LadybirdBrowser/ladybird#tag=2026.47.8
+	source = git+https://github.com/LadybirdBrowser/ladybird#tag=2026.48.0
 	source = gcc-build.patch
-	source = cargo-build-layout.patch
 	source = arch-dependencies.patch
 	source = mimalloc-3.patch
 	sha256sums = SKIP
 	sha256sums = 4065634ed192973510df368f9148a19fbf4f2ebd1d7681c53163fa6f70f0412d
-	sha256sums = 497a25ffeab09d7b4d19210bde0659b7310bb8312e2e4ce1cc248d4d5a0ad2da
-	sha256sums = 49265a2dc6277cbfcdf6b888a8131a42b3aa058014657b9b325a03b444c32c24
-	sha256sums = c5bf079884fbcd649043bf92e3db4179402760ff1db02c3b7a9c76071b15a959
+	sha256sums = 7987a82651b223d36916bc2c754a75e455495b8559f4117dc20b3d4867972dd8
+	sha256sums = bb6932ddc20c0e10e74069b7598e1c7b2a00e9a6ca5cc85ec4f4ff717eb20981
 
 pkgname = ladybird

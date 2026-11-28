@@ -5,18 +5,20 @@
 
 pkgname=ladybird
 epoch=1
-pkgver=2026.47.8
-pkgrel=2
+pkgver=2026.48.0
+pkgrel=1
 pkgdesc='Truly independent web browser'
 arch=(x86_64)
 url='https://github.com/LadybirdBrowser/ladybird'
 license=(BSD-2-Clause)
 depends=(
   angle cpptrace curl dbus ffmpeg fontconfig glib2 harfbuzz icu libavif libdrm
-  libedit libgl libjpeg-turbo libpsl libpulse libwebp libxml2 'mimalloc>=3.4'
+  libedit libgl libjpeg-turbo libpsl libpulse libwebp 'mimalloc>=3.4'
   openssl qt6-base
   qt6-multimedia qt6-positioning qt6-wayland sdl3 simdjson simdutf sqlite
   ttf-liberation vulkan-icd-loader wayland woff2 xcb-util-wm zlib
+  # Ladybird loads these FFmpeg SONAMEs at runtime, outside makepkg's ELF dependency scan.
+  'libavcodec.so=63-64' 'libswresample.so=7-64'
 )
 makedepends=(
   cargo cmake fast_float git glslang ladybird-libpng ladybird-llvm-libc
@@ -27,16 +29,14 @@ options=('!lto' 'debug' '!buildflags' '!staticlibs' '!emptydirs')
 source=(
   "git+$url#tag=${pkgver}"
   'gcc-build.patch'
-  'cargo-build-layout.patch'
   'arch-dependencies.patch'
   'mimalloc-3.patch'
 )
 sha256sums=(
   'SKIP'
   '4065634ed192973510df368f9148a19fbf4f2ebd1d7681c53163fa6f70f0412d'
-  '497a25ffeab09d7b4d19210bde0659b7310bb8312e2e4ce1cc248d4d5a0ad2da'
-  '49265a2dc6277cbfcdf6b888a8131a42b3aa058014657b9b325a03b444c32c24'
-  'c5bf079884fbcd649043bf92e3db4179402760ff1db02c3b7a9c76071b15a959'
+  '7987a82651b223d36916bc2c754a75e455495b8559f4117dc20b3d4867972dd8'
+  'bb6932ddc20c0e10e74069b7598e1c7b2a00e9a6ca5cc85ec4f4ff717eb20981'
 )
 
 prepare() {
@@ -48,9 +48,6 @@ prepare() {
 
   # Allow warnings introduced by newer Arch Rust releases.
   sed -i 's/-Dwarnings //g' Meta/CMake/rust_crate.cmake
-  # OpenSSL 4 deprecates SSL_set1_host, which this release still calls.
-  sed -i '/^add_cxx_compile_options(-Werror)$/a add_cxx_compile_options(-Wno-error=deprecated-declarations)' \
-    Meta/CMake/compile_options.cmake
 }
 
 build() {
