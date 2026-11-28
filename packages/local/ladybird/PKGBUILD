@@ -48,6 +48,10 @@ prepare() {
 
   # Allow warnings introduced by newer Arch Rust releases.
   sed -i 's/-Dwarnings //g' Meta/CMake/rust_crate.cmake
+
+  # Allow deprecation warnings from newer Arch libraries, including OpenSSL 4.
+  sed -i '/^add_cxx_compile_options(-Werror)$/a add_cxx_compile_options(-Wno-error=deprecated-declarations)' \
+    Meta/CMake/compile_options.cmake
 }
 
 build() {
